@@ -4,7 +4,7 @@ main: main.o
 	gcc -lm -o main -pg main.o
 
 main.o: main.c
-	gcc -std=gnu99 -pg -c main.c
+	gcc -std=gnu99 -O3 -pg -c main.c
 
 debug.o:
 	gcc -std=gnu99 -g -c main.c -o debug.o

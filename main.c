@@ -56,7 +56,7 @@ static inline void gs_project_tile(struct Tile * from, struct Tile * into, index
     tv->vel_y += d * tv->density;
 }
 
-static inline void gs_project_all(struct Tile * from, struct Tile * into)
+void gs_project_all(struct Tile * from, struct Tile * into)
 {
     for (index_t x = 0; x < WIDTH * HEIGHT; x++) gs_project_tile(from, into, x % WIDTH, x / WIDTH);
 }
@@ -160,11 +160,6 @@ void external_consts(struct Tile * inplace)
     tile(inplace, WIDTH/2, HEIGHT/4).temp = 1;
 }
 
-int main()
-{
-    for (int i = 0; i < 10; i++) main2();
-}
-
 int main2() 
 {
     struct Tile * board = malloc(board_size);
@@ -199,4 +194,9 @@ int main2()
     }
 
     return 0;
+}
+
+int main()
+{
+    for (int i = 0; i < 10; i++) main2();
 }
