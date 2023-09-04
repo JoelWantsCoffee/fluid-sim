@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <math.h>
+#include <immintrin.h>
 
 #define WIDTH 128
 #define HEIGHT 32
@@ -38,28 +39,28 @@ struct Tile
 */
 
 
-static inline void gs_project_tile(struct Tile * from, struct Tile * into, index_t i, index_t j)
-{ 
-    struct Tile * t = from + i + j * WIDTH;
-    struct Tile * tu = t + ( i + 1 == WIDTH ? -i : 1 );
-    struct Tile * tv = t + ( j + 1 == HEIGHT ? j * -WIDTH : WIDTH );
-
-    double s = t->density + t->density + tu->density + tv->density;
-
-    if (fabs(s) < 0.01) return;
-
-    double d = 1.99 * (t->vel_x + t->vel_y - tu->vel_x - tv->vel_y) / s;
-
-    t->vel_x -= d * t->density;
-    t->vel_y -= d * t->density;
-    tu->vel_x += d * tu->density;
-    tv->vel_y += d * tv->density;
-}
-
-void gs_project_all(struct Tile * from, struct Tile * into)
+void gs_project_all(struct Tile * from)
 {
-    for (index_t x = 0; x < WIDTH * HEIGHT; x++) gs_project_tile(from, into, x % WIDTH, x / WIDTH);
+    for (index_t j = 0; j < HEIGHT; j++)
+    for (index_t i = 0; i < WIDTH; i++) 
+    {
+        struct Tile * t = from + i + j * WIDTH;
+        struct Tile * tu = t + ( i + 1 == WIDTH ? -i : 1 );
+        struct Tile * tv = t + ( j + 1 == HEIGHT ? j * -WIDTH : WIDTH );
+
+        double s = t->density + t->density + tu->density + tv->density;
+        
+        s = (fabs(s) < 0.01) ? 0 : (1 / s);
+
+        double d = 1.99 * (t->vel_x + t->vel_y - tu->vel_x - tv->vel_y) * s;
+
+        t->vel_x = t->vel_x - d * t->density;
+        t->vel_y = t->vel_y - d * t->density;
+        tu->vel_x = tu->vel_x + d * tu->density;
+        tv->vel_y = tv->vel_y + d * tv->density;
+    }
 }
+
 
 double density_between(struct Tile * board, index_t i, index_t j, index_t i_, index_t j_)
 {
@@ -115,8 +116,8 @@ static inline void advect_tile(struct Tile * from, struct Tile * into, index_t i
 
 void advect_all(struct Tile * from, struct Tile * into)
 {
-    for (index_t x = 0; x < WIDTH; x++) 
     for (index_t y = 0; y < HEIGHT; y++)
+    for (index_t x = 0; x < WIDTH; x++) 
     {
         advect_tile(from, into, x, y);
     }
@@ -185,7 +186,7 @@ int main2()
         for (int k = 0; k < 1 / delta_time; k++) 
         {
             external_consts(board);
-            for (int j = 0; j < 20; j++) gs_project_all(board, board);
+            for (int j = 0; j < 20; j++) gs_project_all(board);
             memcpy(board_, board, board_size);
             advect_all(board, board_);
             memcpy(board, board_, board_size);

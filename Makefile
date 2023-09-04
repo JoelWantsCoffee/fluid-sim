@@ -4,13 +4,13 @@ main: main.o
 	gcc -lm -o main -pg main.o
 
 main.o: main.c
-	gcc -std=gnu99 -O3 -pg -c main.c
+	gcc -mavx2 -std=gnu99 -O3 -pg -c main.c
 
 debug.o:
 	gcc -std=gnu99 -g -c main.c -o debug.o
 
 debug: debug.o
-	gcc -lm -o debug debug.o
+	gcc -mavx2 -lm -o debug debug.o
 	gdb debug
 
 clean:
