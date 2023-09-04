@@ -9,17 +9,12 @@
 
 #define tile(board, x, y) (board)[ ((int) ((y + HEIGHT) % HEIGHT) * WIDTH) + ((x + WIDTH) % WIDTH) ]
 
-#define index_t int
+#define index_t int16_t
 #define board_size (sizeof(struct Tile) * WIDTH * HEIGHT)
 
 #define delta_time 0.05
 
 #define tileset(i) (" .,:;ilw8WM")[(int) ((i < 0)?0:((i*10 < 10)?i*10:10))]
-
-#define min(x,y) (x < y ? x : y)
-#define max(x,y) (x > y ? x : y)
-
-#define sign(x) (x < 0 ? -1 : 1)
 
 struct Tile 
 {
@@ -27,7 +22,6 @@ struct Tile
     double vel_y;
     double density;
     double temp;
-    double pressure;
 };
 
 
@@ -42,7 +36,6 @@ struct Tile
    0,0--+---+---+---
 
 */
-
 
 
 static inline void gs_project_tile(struct Tile * from, struct Tile * into, index_t i, index_t j)
@@ -63,27 +56,22 @@ static inline void gs_project_tile(struct Tile * from, struct Tile * into, index
     tv->vel_y += d * tv->density;
 }
 
-void gs_project_all(struct Tile * from, struct Tile * into)
+static inline void gs_project_all(struct Tile * from, struct Tile * into)
 {
-    for (index_t x = 0; x < WIDTH; x++)
-    for (index_t y = 0; y < HEIGHT; y++)
-    {
-        gs_project_tile(from, into, x, y);
-    }
+    for (index_t x = 0; x < WIDTH * HEIGHT; x++) gs_project_tile(from, into, x % WIDTH, x / WIDTH);
 }
 
 double density_between(struct Tile * board, index_t i, index_t j, index_t i_, index_t j_)
 {
-    index_t sign_i = sign(i_ - i);
-    index_t sign_j = sign(j_ - j);
-
     double out = tile(board, i_, j_).density;
 
-    for ( index_t ii = i; ii != i_; ii += sign_i ) out *= tile(board, ii, j).density;
-    for ( index_t jj = j; jj < j_; jj += sign_j ) out *= tile(board, i_, jj).density;
+    if (i_ > i) for ( index_t ii = i; ii < i_; ii++ ) out *= tile(board, ii, j).density;
+        else    for ( index_t ii = i_; ii < i; ii++ ) out *= tile(board, ii, j).density;
+
+    if (j_ > j) for ( index_t jj = j; jj < j_; jj++ ) out *= tile(board, i_, jj).density;
+        else    for ( index_t jj = j_; jj < j; jj++ ) out *= tile(board, i_, jj).density;
 
     return out;
-
 }
 
 void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_t i_, index_t j_, double frac)
@@ -108,7 +96,7 @@ void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_
     y->temp += temp * d;
 }
 
-void advect_tile(struct Tile * from, struct Tile * into, index_t i, index_t j)
+static inline void advect_tile(struct Tile * from, struct Tile * into, index_t i, index_t j)
 {
     double vel_x = delta_time * tile(from, i, j).vel_x;
     double vel_y = delta_time * tile(from, i, j).vel_y;
@@ -118,12 +106,6 @@ void advect_tile(struct Tile * from, struct Tile * into, index_t i, index_t j)
 
     double frac_i = (i + vel_x) - i_;
     double frac_j = (j + vel_y) - j_;
-
-    double i0_part = (1 - frac_i) * vel_x;
-    double i1_part = frac_i * vel_x;
-
-    double j0_part = (1 - frac_j) * vel_y;
-    double j1_part = frac_j * vel_y;
 
     advect(from, into, i, j, i_,     j_,     (1 - frac_i) * (1 - frac_j));
     advect(from, into, i, j, i_ + 1, j_,     frac_i       * (1 - frac_j));
@@ -151,7 +133,7 @@ void print_board(struct Tile * board)
         {
             struct Tile t = tile(board, x, y);
 
-            if (t.density < 0.5) {printf("@"); continue;}
+            // if (t.density < 0.5) {printf("@"); continue;}
             printf( "%c", tileset(sqrt(t.temp + 0.001)) );
             // printf( "%c", tileset(0.5 * (fabs(t.vel_x) + fabs(t.vel_y))) );
 
@@ -178,7 +160,12 @@ void external_consts(struct Tile * inplace)
     tile(inplace, WIDTH/2, HEIGHT/4).temp = 1;
 }
 
-int main() 
+int main()
+{
+    for (int i = 0; i < 10; i++) main2();
+}
+
+int main2() 
 {
     struct Tile * board = malloc(board_size);
     struct Tile * board_ = malloc(board_size);
@@ -192,7 +179,6 @@ int main()
         tile(board, i, j).vel_x = 0.0;
         tile(board, i, j).vel_y = 0.0;
         tile(board, i, j).temp = 0.0;
-        tile(board, i, j).pressure = 0.0;
     }
 
     memcpy(board_, board, board_size);
