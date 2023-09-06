@@ -3,9 +3,9 @@ Flat profile:
 Each sample counts as 0.01 seconds.
   %   cumulative   self              self     total           
  time   seconds   seconds    calls  us/call  us/call  name    
- 83.21      5.00     5.00   400000    12.50    12.50  project_all
- 15.84      5.95     0.95    10000    95.20    95.20  advect_all
-  1.17      6.02     0.07                             main2
+ 87.12     14.59    14.59  1200000    12.16    12.16  project_all
+ 11.91     16.59     1.99    20000    99.72    99.72  advect_all
+  1.14     16.78     0.19                             main2
 
  %         the percentage of the total running time of the
 time       program used by this function.
@@ -43,19 +43,19 @@ notice and this notice are preserved.
 		     Call graph (explanation follows)
 
 
-granularity: each sample hit covers 2 byte(s) for 0.17% of 6.02 seconds
+granularity: each sample hit covers 2 byte(s) for 0.06% of 16.78 seconds
 
 index % time    self  children    called     name
                                                  <spontaneous>
-[1]    100.0    0.07    5.95                 main2 [1]
-                5.00    0.00  400000/400000      project_all [2]
-                0.95    0.00   10000/10000       advect_all [3]
+[1]    100.0    0.19   16.59                 main2 [1]
+               14.59    0.00 1200000/1200000     project_all [2]
+                1.99    0.00   20000/20000       advect_all [3]
 -----------------------------------------------
-                5.00    0.00  400000/400000      main2 [1]
-[2]     83.0    5.00    0.00  400000         project_all [2]
+               14.59    0.00 1200000/1200000     main2 [1]
+[2]     87.0   14.59    0.00 1200000         project_all [2]
 -----------------------------------------------
-                0.95    0.00   10000/10000       main2 [1]
-[3]     15.8    0.95    0.00   10000         advect_all [3]
+                1.99    0.00   20000/20000       main2 [1]
+[3]     11.9    1.99    0.00   20000         advect_all [3]
 -----------------------------------------------
 
  This table describes the call tree of the program, and was sorted by

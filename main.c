@@ -19,10 +19,10 @@
 
 struct Tile 
 {
-    double vel_x;
-    double vel_y;
-    double density;
-    double temp;
+    float temp;
+    float vel_x;
+    float vel_y;
+    float density;
 };
 
 
@@ -47,25 +47,163 @@ void project_all(struct Tile * from, struct Tile * into)
         struct Tile * tu = t + ( i + 1 == WIDTH ? -i : 1 );
         struct Tile * tv = t + ( j + 1 == HEIGHT ? j * -WIDTH : WIDTH );
 
-        double s = t->density + t->density + tu->density + tv->density;
+        float s = t->density + t->density + tu->density + tv->density;
         
         s = (fabs(s) < 0.01) ? 0 : (1 / s);
 
-        double d = (t->vel_x + t->vel_y - tu->vel_x - tv->vel_y) * s;
+        float d = (t->vel_x + t->vel_y - tu->vel_x - tv->vel_y) * s;
         
+        // 16.75 s
         (t - from + into)->vel_x -= d * t->density;
         (t - from + into)->vel_y -= d * t->density;
         (tu - from + into)->vel_x += d * tu->density;
         (tv - from + into)->vel_y += d * tv->density;
     }
+
+    // for (index_t i = 0; i < WIDTH*HEIGHT; i++) 19.09 s
+    // {
+    //     into[i].vel_x *= from[i].density;
+    //     into[i].vel_y *= from[i].density;
+    // }
+
 }
 
 
-double density_between(struct Tile * board, index_t i, index_t j, index_t i_, index_t j_)
+/*
+
+idea:
+
+__m256 * sumdens_values
+__m256 * dens_values
+
+__m256 * from_velx
+__m256 * from_vely
+
+__m256 * to_velx
+__m256 * to_vely
+
+*/
+
+
+#define bump(place) (_mm256_loadu_ps(((float *) (&place)) + 1))
+#define scale_index(small, big, count) ((sizeof(small) * count) / sizeof(big))
+
+void project_single_fast( 
+    // __m256 * s,
+    __m256 * density,
+    __m256 * from_velx,
+    __m256 * from_vely,
+    __m256 * to_velx,
+    __m256 * to_vely,
+    index_t i)
+
+{
+    // d = from_velx[i] + from_vely[i] - from_velx[i + 0.1] - from_vely[i + WIDTH * 0.1];
+    __m256 d = _mm256_sub_ps( _mm256_add_ps(from_velx[i], from_vely[i])
+                            , _mm256_add_ps( 
+                                bump(from_velx[i]), 
+                                from_vely[i + scale_index(float, __m256, WIDTH)]
+                            ));
+
+    
+    __m256 s = _mm256_add_ps( _mm256_add_ps(density[i], density[i])
+                            , _mm256_add_ps( 
+                                bump(density[i]), 
+                                density[i + scale_index(float, __m256, WIDTH)]
+                            ));
+    // d *= s[i];
+    d = _mm256_mul_ps( d, s );
+    
+    // to_velx[i + 0.1] += density[i + 0.1] * d;
+    // to_vely[i + WIDTH * 0.1] += density[i + WIDTH * 0.1] * d;
+
+    __m256 mask = (__m256) _mm256_set_epi32(-1,0,0,0, 0,0,0,0);
+    __m256i permute = _mm256_set_epi32(0,7,6,5,4,3,2,1);
+
+    __m256 toadd = _mm256_permutevar8x32_ps(
+        _mm256_add_ps( bump(to_velx[i]), _mm256_mul_ps( bump(density[i]), d ) )
+        , permute );
+
+    // _mm256_permutevar8x32_ps ( 1 2 3 4 5 6 7 0 )
+    // _mm256_andnot_ps
+    // _mm256_and_ps
+    
+    to_velx[i] = _mm256_add_ps(to_velx[i], _mm256_andnot_ps(mask, toadd));
+    to_velx[i+1] = _mm256_add_ps(to_velx[i+1], _mm256_and_ps(mask, toadd));
+    
+    to_vely[i + scale_index(float, __m256, WIDTH)]
+        = _mm256_add_ps(
+            to_vely[i + scale_index(float, __m256, WIDTH)],
+            _mm256_mul_ps( density[i + scale_index(float, __m256, WIDTH)], d )
+        );
+    
+
+    // to_velx[i] -= density[i] * d;
+    // to_vely[i] -= density[i] * d;
+    d = _mm256_mul_ps( density[i], d );
+    to_velx[i] = _mm256_sub_ps( to_velx[i], d );
+    to_vely[i] = _mm256_sub_ps( to_vely[i], d );
+}
+
+#define vec8(board, i, j, prop) _mm256_set_ps( tile( board , i + 7, j).prop, tile( board , i + 6, j).prop, tile( board , i + 5, j).prop, tile( board , i + 4, j).prop, tile( board , i + 3, j).prop, tile( board , i + 2, j).prop, tile( board , i + 1, j).prop, tile( board , i + 0, j).prop )
+
+void project_all_fast(struct Tile * from, struct Tile * to)
+{
+    size_t size = sizeof(__m256) * (WIDTH/8 + 1) * (HEIGHT + 1);
+    __m256 * density = aligned_alloc(32, size);
+    __m256 * from_velx = aligned_alloc(32, size);
+    __m256 * from_vely = aligned_alloc(32, size);
+    __m256 * to_velx = aligned_alloc(32, size);
+    __m256 * to_vely = aligned_alloc(32, size);
+
+    if (!density) exit(0);
+
+    for (index_t j = 0; j < HEIGHT + 1; j++)
+    for (index_t i = 0; i < WIDTH + 1; i += 8)
+    {
+        int index = (i + j * WIDTH) / 8;
+        
+        density[index] = vec8(from, i, j, density);
+        from_velx[index] = vec8(from, i, j, vel_x);
+        from_vely[index] = vec8(from, i, j, vel_y);
+        to_velx[index] = vec8(to, i, j, vel_x);
+        to_vely[index] = vec8(to, i, j, vel_y);
+    }
+
+    for (index_t i = 0; i < WIDTH * HEIGHT / 8; i++) 
+        project_single_fast(density, from_velx, from_vely, to_velx, to_vely, i);
+
+
+    for (index_t j = 0; j < HEIGHT; j++)
+    for (index_t i = 0; i < WIDTH; i += 8)
+    {
+        float velx[8];
+        float vely[8];
+        int index = (i + j * WIDTH) / 8;
+        _mm256_storeu_ps(velx, ((__m256 *) to_velx)[index]);
+        _mm256_storeu_ps(vely, ((__m256 *) to_vely)[index]);
+        
+        for (int k = 0; k < 8; k++)
+        {
+            tile(to, i + k, j).vel_x = velx[k];
+            tile(to, i + k, j).vel_y = vely[k];
+        }
+    }
+
+    free(density);
+    free(from_velx);
+    free(from_vely);
+    free(to_velx);
+    free(to_vely);
+}
+
+
+
+float density_between(struct Tile * board, index_t i, index_t j, index_t i_, index_t j_)
 {
     if (i < -WIDTH || i_ < -WIDTH || j < -HEIGHT || j_ < -HEIGHT) return 0;
 
-    double out = tile(board, i_, j_).density;
+    float out = tile(board, i_, j_).density;
 
     if (i_ > i) for ( index_t ii = i; ii < i_; ii++ ) out *= tile(board, ii, j).density;
         else    for ( index_t ii = i_; ii < i; ii++ ) out *= tile(board, ii, j).density;
@@ -76,18 +214,18 @@ double density_between(struct Tile * board, index_t i, index_t j, index_t i_, in
     return out;
 }
 
-void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_t i_, index_t j_, double frac)
+void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_t i_, index_t j_, float frac)
 {
 
     struct Tile * f = &(tile(from, i_, j_));
     struct Tile * x = &(tile(into, i, j));
     struct Tile * y = &(tile(into, i_, j_));
 
-    double velx = frac * f->vel_x;
-    double vely = frac * f->vel_y;
-    double temp = frac * f->temp;
+    float velx = frac * f->vel_x;
+    float vely = frac * f->vel_y;
+    float temp = frac * f->temp;
 
-    double d = density_between(from, i, j, i_, j_);
+    float d = density_between(from, i, j, i_, j_);
 
     x->vel_x -= velx;
     x->vel_y -= vely;
@@ -100,14 +238,14 @@ void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_
 
 static inline void advect_tile(struct Tile * from, struct Tile * into, index_t i, index_t j)
 {
-    double vel_x = delta_time * tile(from, i, j).vel_x;
-    double vel_y = delta_time * tile(from, i, j).vel_y;
+    float vel_x = delta_time * tile(from, i, j).vel_x;
+    float vel_y = delta_time * tile(from, i, j).vel_y;
     
     index_t i_ = i - vel_x;
     index_t j_ = j - vel_y;
 
-    double frac_i = (i + vel_x) - i_;
-    double frac_j = (j + vel_y) - j_;
+    float frac_i = (i + vel_x) - i_;
+    float frac_j = (j + vel_y) - j_;
 
     advect(from, into, i, j, i_,     j_,     (1 - frac_i) * (1 - frac_j));
     advect(from, into, i, j, i_ + 1, j_,     frac_i       * (1 - frac_j));
@@ -181,7 +319,7 @@ int main2()
 
     memcpy(board_, board, board_size);
 
-    for (int i = 0; i < 500; i++)
+    for (int i = 0; i < 100; i++)
     {
         print_board(board);
 
@@ -189,10 +327,10 @@ int main2()
         {
             external_consts(board);
             memcpy(board_, board, board_size);
-            for (int j = 0; j < 80; j++)
+            for (int j = 0; j < 60; j++)
             {
                 
-                project_all(board, board_);
+                project_all_fast(board, board_);
                 memcpy(board, board_, board_size);
             }
     
