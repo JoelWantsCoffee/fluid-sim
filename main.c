@@ -49,7 +49,7 @@ void project_all(struct Tile * from, struct Tile * into)
 
         float s = t->density + t->density + tu->density + tv->density;
         
-        s = (fabs(s) < 0.01) ? 0 : (1 / s);
+        s = !s ? 0 : (1 / s);
 
         float d = (t->vel_x + t->vel_y - tu->vel_x - tv->vel_y) * s;
         
@@ -86,7 +86,6 @@ __m256 * to_vely
 
 
 #define bump(place) (_mm256_loadu_ps(((float *) (&place)) + 1))
-#define scale_index(small, big, count) ((sizeof(small) * count) / sizeof(big))
 
 void project_single_fast( 
     // __m256 * s,
@@ -98,49 +97,59 @@ void project_single_fast(
     index_t i)
 
 {
-    // d = from_velx[i] + from_vely[i] - from_velx[i + 0.1] - from_vely[i + WIDTH * 0.1];
+    /*
+        d = from_velx[i] + from_vely[i] - from_velx[i + 0.1] - from_vely[i + WIDTH * 0.1];
+    */
     __m256 d = _mm256_sub_ps( _mm256_add_ps(from_velx[i], from_vely[i])
                             , _mm256_add_ps( 
                                 bump(from_velx[i]), 
-                                from_vely[i + scale_index(float, __m256, WIDTH)]
+                                from_vely[ i + WIDTH/8 ]
                             ));
 
     
     __m256 s = _mm256_add_ps( _mm256_add_ps(density[i], density[i])
                             , _mm256_add_ps( 
                                 bump(density[i]), 
-                                density[i + scale_index(float, __m256, WIDTH)]
+                                density[ i + WIDTH/8 ]
                             ));
-    // d *= s[i];
+
+    __m256 zeros = _mm256_set_ps(0,0,0,0,0,0,0,0);
+
+    s = _mm256_and_ps(_mm256_cmp_ps(s, zeros, _CMP_NEQ_OS), _mm256_rcp_ps(s));
+    /*
+        d *= s[i];
+    */
     d = _mm256_mul_ps( d, s );
     
-    // to_velx[i + 0.1] += density[i + 0.1] * d;
-    // to_vely[i + WIDTH * 0.1] += density[i + WIDTH * 0.1] * d;
-
-    __m256 mask = (__m256) _mm256_set_epi32(-1,0,0,0, 0,0,0,0);
-    __m256i permute = _mm256_set_epi32(0,7,6,5,4,3,2,1);
+    /*
+        to_velx[i + 1] += density[i + 1] * d;
+    */
+    __m256 mask = (__m256) _mm256_set_epi32(0,0,0,0,0,0,0,-1);
+    __m256i permute = _mm256_set_epi32(6,5,4,3,2,1,0,7);
 
     __m256 toadd = _mm256_permutevar8x32_ps(
         _mm256_add_ps( bump(to_velx[i]), _mm256_mul_ps( bump(density[i]), d ) )
         , permute );
-
-    // _mm256_permutevar8x32_ps ( 1 2 3 4 5 6 7 0 )
-    // _mm256_andnot_ps
-    // _mm256_and_ps
     
-    to_velx[i] = _mm256_add_ps(to_velx[i], _mm256_andnot_ps(mask, toadd));
-    to_velx[i+1] = _mm256_add_ps(to_velx[i+1], _mm256_and_ps(mask, toadd));
+    to_velx[i] = _mm256_add_ps(_mm256_and_ps(mask, to_velx[i]), _mm256_andnot_ps(mask, toadd));
+    to_velx[i+1] = _mm256_add_ps(_mm256_andnot_ps(mask, to_velx[i+1]), _mm256_and_ps(mask, toadd));
     
-    to_vely[i + scale_index(float, __m256, WIDTH)]
+    
+    /* 
+        to_vely[i + WIDTH * 0.1] += density[i + WIDTH * 0.1] * d;
+    */
+    to_vely[i + WIDTH / 8]
         = _mm256_add_ps(
-            to_vely[i + scale_index(float, __m256, WIDTH)],
-            _mm256_mul_ps( density[i + scale_index(float, __m256, WIDTH)], d )
+            to_vely[i + WIDTH / 8],
+            _mm256_mul_ps( density[i + WIDTH / 8], d )
         );
     
-
-    // to_velx[i] -= density[i] * d;
-    // to_vely[i] -= density[i] * d;
+    /*
+        to_velx[i] -= density[i] * d;
+        to_vely[i] -= density[i] * d;
+    */
     d = _mm256_mul_ps( density[i], d );
+
     to_velx[i] = _mm256_sub_ps( to_velx[i], d );
     to_vely[i] = _mm256_sub_ps( to_vely[i], d );
 }
@@ -329,8 +338,8 @@ int main2()
             memcpy(board_, board, board_size);
             for (int j = 0; j < 60; j++)
             {
-                
-                project_all_fast(board, board_);
+                project_all_fast(board, board_); // 21.26 s 
+                // project_all(board, board_); // 17.63 s
                 memcpy(board, board_, board_size);
             }
     
@@ -338,7 +347,6 @@ int main2()
             advect_all(board, board_);
             memcpy(board, board_, board_size);
         }
-
     }
     return 0;
 }
@@ -347,3 +355,19 @@ int main()
 {
     for (int i = 0; i < 10; i++) main2();
 }
+
+/* TEST CODE
+
+    __m256 mask = (__m256) _mm256_set_epi32(0,0,0,0,0,0,0,-1);
+    __m256i permute = _mm256_set_epi32(6,5,4,3,2,1,0,7);
+    __m256 * test = aligned_alloc(32, sizeof(__m256) * 2);
+    test[0] = _mm256_set_ps(8,7,6,5,4,3,2,1);
+    test[1] = _mm256_set_ps(16,15,14,13,12,11,10,9);
+    __m256 test2 = bump(test[0]);
+    __m256 test3 = _mm256_permutevar8x32_ps(test[0], permute);
+    __m256 test4 = _mm256_and_ps(test[0], mask);
+
+    float velx[8];
+    _mm256_storeu_ps(velx, test[0]);
+
+*/
