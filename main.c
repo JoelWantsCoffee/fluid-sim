@@ -222,11 +222,15 @@ static inline void advect_tile(struct Tile * from, struct Tile * into, index_t i
 
 void advect_all(struct Tile * from, struct Tile * into)
 {
+    memcpy(into, from, board_size);
+
     for (index_t y = 0; y < HEIGHT; y++)
     for (index_t x = 0; x < WIDTH; x++) 
     {
         advect_tile(from, into, x, y);
     }
+
+    memcpy(from, into, board_size);
 }
 
 void external_consts(struct Tile * inplace, float t)
@@ -293,11 +297,9 @@ int main()
             external_consts(board, (float) i + k / delta_time);
 
             project_all_fast(board, board_, density, from_velx, from_vely, to_velx, to_vely);
-            // do_project_all(board, board_);
+            // project_all(board, board_);
     
-            memcpy(board_, board, board_size);
             advect_all(board, board_);
-            memcpy(board, board_, board_size);
         }
     }
     return 0;
