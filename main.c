@@ -13,6 +13,7 @@
 
 #define index_t int16_t
 #define board_size (sizeof(struct Tile) * WIDTH * HEIGHT)
+#define simd_board_size (sizeof(__m256) * (WIDTH/8 + 1) * (HEIGHT + 1))
 
 #define delta_time 0.05
 
@@ -86,33 +87,28 @@ void do_project_all(struct Tile * board, struct Tile * board_)
 
 #define bump(place) (_mm256_loadu_ps(((float *) (&place)) + 1))
 
-void project_single_fast( 
-    // __m256 * s,
-    __m256 * density,
-    __m256 * from_velx,
-    __m256 * from_vely,
-    __m256 * to_velx,
-    __m256 * to_vely,
-    index_t i)
-
+void project_single_fast( __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, index_t i )
 {
+    __m256 zeros = _mm256_set_ps(0,0,0,0,0,0,0,0);
+    __m256 mask = (__m256) _mm256_set_epi32(0,0,0,0,0,0,0,-1);
+    __m256i permute = _mm256_set_epi32(6,5,4,3,2,1,0,7);
+    
+    __m256 tu_density = bump(density[i]);
+    index_t tv_i = i + WIDTH/8;
+
+
     /*
         d = from_velx[i] + from_vely[i] - from_velx[i + 0.1] - from_vely[i + WIDTH * 0.1];
     */
-    __m256 d = _mm256_sub_ps( _mm256_add_ps(from_velx[i], from_vely[i])
-                            , _mm256_add_ps( 
-                                bump(from_velx[i]), 
-                                from_vely[ i + WIDTH/8 ]
-                            ));
+    __m256 d = _mm256_sub_ps( _mm256_add_ps( from_velx[i], from_vely[i] )
+                            , _mm256_add_ps( bump(from_velx[i]), from_vely[ tv_i ] )
+                            );
 
     
-    __m256 s = _mm256_add_ps( _mm256_add_ps(density[i], density[i])
-                            , _mm256_add_ps( 
-                                bump(density[i]), 
-                                density[ i + WIDTH/8 ]
-                            ));
+    __m256 s = _mm256_add_ps( _mm256_add_ps( density[i], density[i])
+                            , _mm256_add_ps( tu_density, density[ tv_i ] )
+                            );
 
-    __m256 zeros = _mm256_set_ps(0,0,0,0,0,0,0,0);
 
     s = _mm256_and_ps(_mm256_cmp_ps(s, zeros, _CMP_NEQ_OS), _mm256_rcp_ps(s));
     /*
@@ -123,13 +119,8 @@ void project_single_fast(
     /*
         to_velx[i + 1] += density[i + 1] * d;
     */
-    __m256 mask = (__m256) _mm256_set_epi32(0,0,0,0,0,0,0,-1);
-    __m256i permute = _mm256_set_epi32(6,5,4,3,2,1,0,7);
 
-    __m256 toadd = _mm256_permutevar8x32_ps(
-        _mm256_add_ps( bump(to_velx[i]), _mm256_mul_ps( bump(density[i]), d ) )
-        , permute );
-    
+    __m256 toadd = _mm256_permutevar8x32_ps( _mm256_add_ps( bump(to_velx[i]), _mm256_mul_ps(tu_density, d) ), permute );
     to_velx[i] = _mm256_add_ps(_mm256_and_ps(mask, to_velx[i]), _mm256_andnot_ps(mask, toadd));
     to_velx[i+1] = _mm256_add_ps(_mm256_andnot_ps(mask, to_velx[i+1]), _mm256_and_ps(mask, toadd));
     
@@ -137,11 +128,7 @@ void project_single_fast(
     /* 
         to_vely[i + WIDTH * 0.1] += density[i + WIDTH * 0.1] * d;
     */
-    to_vely[i + WIDTH / 8]
-        = _mm256_add_ps(
-            to_vely[i + WIDTH / 8],
-            _mm256_mul_ps( density[i + WIDTH / 8], d )
-        );
+    to_vely[tv_i] = _mm256_add_ps( to_vely[tv_i], _mm256_mul_ps(density[tv_i], d) );
     
     /*
         to_velx[i] -= density[i] * d;
@@ -153,28 +140,15 @@ void project_single_fast(
     to_vely[i] = _mm256_sub_ps( to_vely[i], d );
 }
 
-#define vec8(board, i, j, prop) _mm256_set_ps( tile( board , i + 7, j).prop, tile( board , i + 6, j).prop, tile( board , i + 5, j).prop, tile( board , i + 4, j).prop, tile( board , i + 3, j).prop, tile( board , i + 2, j).prop, tile( board , i + 1, j).prop, tile( board , i + 0, j).prop )
 
-/*
-    8.23 s
-*/
-void project_all_fast(struct Tile * from, struct Tile * to)
+static inline void populate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
 {
-    memcpy(to, from, board_size);
-
-    size_t size = sizeof(__m256) * (WIDTH/8 + 1) * (HEIGHT + 1);
-    __m256 * density = aligned_alloc(32, size);
-    __m256 * from_velx = aligned_alloc(32, size);
-    __m256 * from_vely = aligned_alloc(32, size);
-    __m256 * to_velx = aligned_alloc(32, size);
-    __m256 * to_vely = aligned_alloc(32, size);
-
-    if (!density) exit(0);
-
     for (index_t j = 0; j < HEIGHT + 1; j++)
     for (index_t i = 0; i < WIDTH + 1; i += 8)
     {
         int index = (i + j * WIDTH) / 8;
+        
+        #define vec8(board, i, j, prop) _mm256_set_ps( tile( board , i + 7, j).prop, tile( board , i + 6, j).prop, tile( board , i + 5, j).prop, tile( board , i + 4, j).prop, tile( board , i + 3, j).prop, tile( board , i + 2, j).prop, tile( board , i + 1, j).prop, tile( board , i + 0, j).prop )
         
         density[index] = vec8(from, i, j, density);
         from_velx[index] = vec8(from, i, j, vel_x);
@@ -182,20 +156,10 @@ void project_all_fast(struct Tile * from, struct Tile * to)
         to_velx[index] = vec8(to, i, j, vel_x);
         to_vely[index] = vec8(to, i, j, vel_y);
     }
+} 
 
-    for (int r = 0; r < ITCOUNT; r++)
-    {
-        for (index_t i = 0; i < WIDTH * HEIGHT / 8; i++) 
-        {
-            project_single_fast(density, from_velx, from_vely, to_velx, to_vely, i);
-        }
-        for (index_t i = 0; i < WIDTH * HEIGHT / 8; i++) 
-        {
-            from_velx[i] = to_velx[i];
-            from_vely[i] = to_vely[i];
-        }
-    }
-
+static inline void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
+{
     for (index_t j = 0; j < HEIGHT; j++)
     for (index_t i = 0; i < WIDTH; i += 8)
     {
@@ -211,14 +175,31 @@ void project_all_fast(struct Tile * from, struct Tile * to)
             tile(to, i + k, j).vel_y = vely[k];
         }
     }
+} 
+
+/*
+    8.23 s
+*/
+void project_all_fast(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
+{
+    memcpy(to, from, board_size);
+
+    populate_simd(from, to, density, from_velx, from_vely, to_velx, to_vely);
+
+    int c = WIDTH * HEIGHT / 8;
+
+    for (int r = 0; r < ITCOUNT; r++)
+    {
+        for (index_t i = 0; i < c; i++)
+            project_single_fast(density, from_velx, from_vely, to_velx, to_vely, i);
+
+        memcpy(from_velx, to_velx, simd_board_size); //_mm256_mul_ps(to_velx[i], density[i]);
+        memcpy(from_vely, to_vely, simd_board_size); //_mm256_mul_ps(to_vely[i], density[i]);
+    }
+
+    unpopulate_simd(from, to, density, from_velx, from_vely, to_velx, to_vely);
 
     memcpy(from, to, board_size);
-
-    free(density);
-    free(from_velx);
-    free(from_vely);
-    free(to_velx);
-    free(to_vely);
 }
 
 
@@ -329,6 +310,12 @@ int main2()
     struct Tile * board = malloc(board_size);
     struct Tile * board_ = malloc(board_size);
 
+    __m256 * density = aligned_alloc(32, simd_board_size);
+    __m256 * from_velx = aligned_alloc(32, simd_board_size);
+    __m256 * from_vely = aligned_alloc(32, simd_board_size);
+    __m256 * to_velx = aligned_alloc(32, simd_board_size);
+    __m256 * to_vely = aligned_alloc(32, simd_board_size);
+
     for (int i = 0; i < WIDTH; i++) 
     for (int j = 0; j < HEIGHT; j++) 
     {
@@ -349,7 +336,7 @@ int main2()
         {
             external_consts(board);
 
-            project_all_fast(board, board_);
+            project_all_fast(board, board_, density, from_velx, from_vely, to_velx, to_vely);
             // do_project_all(board, board_);
     
             memcpy(board_, board, board_size);
