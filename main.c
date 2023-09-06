@@ -38,108 +38,6 @@ struct Tile
 
 */
 
-
-// void jacobi(half2 coords   : WPOS,   // grid coordinates
-
-//    out
-//    half4 xNew : COLOR,  // result
-
-//    uniform half alpha // -pressure^2
-//    , uniform half rBeta // 0.25
-//    , uniform samplerRECT x // pressure
-//    , uniform samplerRECT b // divergence
-//    )   // b vector (Ax = b)
-// {
-//     vec l = tile(pressure, i - 1, j);
-//     vec b = tile(pressure, i, j - 1);
-//     vec r = tile(pressure, i + 1, j);
-//     vec t = tile(pressure, i, j + 1);
-
-//     vec div = tile(divergence, i, j);
-
-//     // evaluate Jacobi iteration
-//     tile(pressure, i, j) = (l + r + b + t - (pressure)^2 * div) * 0.25;
-// }
-
-
-// // solve A * pressure = divergence
-// void jacobi_div(struct Tile * from, struct Tile * into, double alpha, double rbeta)
-// {
-//     for (index_t j = 0; j < HEIGHT; j++)
-//     for (index_t i = 0; i < WIDTH; i++)
-//     {
-//         struct Tile * t = from + i + j * WIDTH;
-//         struct Tile * tu = t + ( i + 1 == WIDTH ? -i : 1 );
-//         struct Tile * tv = t + ( j + 1 == HEIGHT ? j * -WIDTH : WIDTH );
-//         struct Tile * tx = t + ( !i ? i + WIDTH - 1 : -1 );
-//         struct Tile * ty = t + ( !j ? WIDTH * (HEIGHT - 1) : -WIDTH );
-
-//         double div = (t->vel_x - tu->vel_x + t->vel_y - tv->vel_y); 
-
-//         double w = tx->density + ty->density + tu->density + tv->density;
-
-//         (t - from + into)->p_x = 
-//             ( tx->p_x * tx->density
-//             + ty->p_x * ty->density
-//             + tu->p_x * tu->density
-//             + tv->p_x * tv->density
-//             + alpha * div
-//             ) * (w == 0? 1 : 1.0 / w );
-//             // + - t->density ;
-//     }
-// }
-
-
-// void jacobi(struct Tile * from, struct Tile * into)
-// {
-//     for (index_t j = 0; j < HEIGHT; j++)
-//     for (index_t i = 0; i < WIDTH; i++)
-//     {
-//         struct Tile * t = from + i + j * WIDTH;
-//         struct Tile * tu = t + ( i + 1 == WIDTH ? -i : 1 );
-//         struct Tile * tv = t + ( j + 1 == HEIGHT ? j * -WIDTH : WIDTH );
-//         // struct Tile * tx = t + ( !i ? i + WIDTH - 1 : -1 );
-//         // struct Tile * ty = t + ( !j ? WIDTH * (HEIGHT - 1) : -WIDTH );
-
-//         double dens = t->density + t->density + tu->density + tv->density;
-        
-//         dens = (fabs(dens) < 0.01) ? 0 : (1.0 / dens);
-
-//         double d = (t->vel_x + t->vel_y - tu->vel_x - tv->vel_y) * dens;
-
-//         (t - from + into)->p_x -= d * t->density;
-//         (t - from + into)->p_y -= d * t->density;
-//         (tu - from + into)->p_x += d * tu->density;
-//         (tv - from + into)->p_y += d * tv->density;
-
-//         // (t - from + into)->p_x = t->density *
-//         //     ( t->p_x * t->density + (1 - t->density)
-//         //     + t->p_y * t->density + (1 - t->density)
-//         //     + tu->p_x * tu->density + (1 - tu->density)
-//         //     + tv->p_y * tv->density + (1 - tv->density)
-//         //     - pressure2 * (t->vel_x + t->vel_y - tu->vel_x - tv->vel_y)
-//         //     ) * 0.25;
-//     }
-// }
-
-// void applygrad(struct Tile * board)
-// {
-//     for (index_t j = 0; j < HEIGHT; j++)
-//     for (index_t i = 0; i < WIDTH; i++)
-//     {
-//         struct Tile * t = board + i + j * WIDTH;
-//         // struct Tile * tu = t + ( i + 1 == WIDTH ? -i : 1 );
-//         // struct Tile * tv = t + ( j + 1 == HEIGHT ? j * -WIDTH : WIDTH );
-//         struct Tile * tx = t + ( !i ? i + WIDTH - 1 : -1 );
-//         struct Tile * ty = t + ( !j ? WIDTH * (HEIGHT - 1) : -WIDTH );
-
-//         t->vel_x += delta_time * t->density * tx->p_x;
-//         t->vel_y += delta_time * t->density * ty->p_x;
-//         t->vel_x -= delta_time * t->density * t->p_x;
-//         t->vel_y -= delta_time * t->density * t->p_x;
-//     }
-// }
-
 void project_all(struct Tile * from, struct Tile * into)
 {
     for (index_t j = 0; j < HEIGHT; j++)
@@ -167,7 +65,6 @@ double density_between(struct Tile * board, index_t i, index_t j, index_t i_, in
 {
     if (i < -WIDTH || i_ < -WIDTH || j < -HEIGHT || j_ < -HEIGHT) return 0;
 
-    // printf("(%d, %d) (%d, %d)\n", i, j, i_, j_);
     double out = tile(board, i_, j_).density;
 
     if (i_ > i) for ( index_t ii = i; ii < i_; ii++ ) out *= tile(board, ii, j).density;
@@ -233,8 +130,6 @@ void external_consts(struct Tile * inplace)
 {
     for (int i = 0; i < WIDTH * HEIGHT; i++) 
     {
-        // inplace[i].p_x = 1;
-        // inplace[i].p_y = 1;
         inplace[i].vel_y += delta_time * inplace[i].temp;
         inplace[i].temp *= pow(0.99, delta_time);
         inplace[i].vel_y *= (fabs(inplace[i].vel_y) > 0.5 * HEIGHT) ? 0 : 1;
@@ -277,19 +172,16 @@ int main2()
     for (int i = 0; i < WIDTH; i++) 
     for (int j = 0; j < HEIGHT; j++) 
     {
-        tile(board, i, j).density = ! ( !i || !j || i + 1 >= WIDTH || j + 1 >= HEIGHT );
-        tile(board, i, j).density *= ! ( pow(i - WIDTH/2, 2) + pow((j * 2) - 2 * 0.7 * HEIGHT, 2) < pow(7, 2) );
-        
         tile(board, i, j).vel_x = 0.0;
         tile(board, i, j).vel_y = 0.0;
         tile(board, i, j).temp = 0.0;
-        // tile(board, i, j).p_x = 0.0;
-        // tile(board, i, j).p_y = 0.0;
+        tile(board, i, j).density = ! ( !i || !j || i + 1 >= WIDTH || j + 1 >= HEIGHT );
+        tile(board, i, j).density *= ! ( pow(i - WIDTH/2, 2) + pow((j * 2) - 2 * 0.7 * HEIGHT, 2) < pow(7, 2) );
     }
 
     memcpy(board_, board, board_size);
 
-    for (int i = 0; i < 1000; i++)
+    for (int i = 0; i < 500; i++)
     {
         print_board(board);
 
@@ -297,16 +189,12 @@ int main2()
         {
             external_consts(board);
             memcpy(board_, board, board_size);
-            for (int j = 0; j < 40; j++)
+            for (int j = 0; j < 80; j++)
             {
                 
                 project_all(board, board_);
                 memcpy(board, board_, board_size);
-                // project_all(board_, board);
-                // jacobi_div(board, board_, -0.1, 0.25);
             }
-
-            // applygrad(board);
     
             memcpy(board_, board, board_size);
             advect_all(board, board_);
