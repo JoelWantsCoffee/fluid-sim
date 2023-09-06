@@ -7,6 +7,7 @@
 
 #define WIDTH 128
 #define HEIGHT 32
+#define ITCOUNT 60
 
 #define tile(board, x, y) (board)[ ((int) ((y + HEIGHT) % HEIGHT) * WIDTH) + ((x + WIDTH) % WIDTH) ]
 
@@ -69,21 +70,19 @@ void project_all(struct Tile * from, struct Tile * into)
 }
 
 
+
 /*
-
-idea:
-
-__m256 * sumdens_values
-__m256 * dens_values
-
-__m256 * from_velx
-__m256 * from_vely
-
-__m256 * to_velx
-__m256 * to_vely
-
+    17.63 s
 */
-
+void do_project_all(struct Tile * board, struct Tile * board_)
+{
+    memcpy(board_, board, board_size);
+    for (int j = 0; j < ITCOUNT; j++)
+    {
+        project_all(board, board_);
+        memcpy(board, board_, board_size);
+    }
+}
 
 #define bump(place) (_mm256_loadu_ps(((float *) (&place)) + 1))
 
@@ -156,8 +155,13 @@ void project_single_fast(
 
 #define vec8(board, i, j, prop) _mm256_set_ps( tile( board , i + 7, j).prop, tile( board , i + 6, j).prop, tile( board , i + 5, j).prop, tile( board , i + 4, j).prop, tile( board , i + 3, j).prop, tile( board , i + 2, j).prop, tile( board , i + 1, j).prop, tile( board , i + 0, j).prop )
 
+/*
+    8.23 s
+*/
 void project_all_fast(struct Tile * from, struct Tile * to)
 {
+    memcpy(to, from, board_size);
+
     size_t size = sizeof(__m256) * (WIDTH/8 + 1) * (HEIGHT + 1);
     __m256 * density = aligned_alloc(32, size);
     __m256 * from_velx = aligned_alloc(32, size);
@@ -179,9 +183,18 @@ void project_all_fast(struct Tile * from, struct Tile * to)
         to_vely[index] = vec8(to, i, j, vel_y);
     }
 
-    for (index_t i = 0; i < WIDTH * HEIGHT / 8; i++) 
-        project_single_fast(density, from_velx, from_vely, to_velx, to_vely, i);
-
+    for (int r = 0; r < ITCOUNT; r++)
+    {
+        for (index_t i = 0; i < WIDTH * HEIGHT / 8; i++) 
+        {
+            project_single_fast(density, from_velx, from_vely, to_velx, to_vely, i);
+        }
+        for (index_t i = 0; i < WIDTH * HEIGHT / 8; i++) 
+        {
+            from_velx[i] = to_velx[i];
+            from_vely[i] = to_vely[i];
+        }
+    }
 
     for (index_t j = 0; j < HEIGHT; j++)
     for (index_t i = 0; i < WIDTH; i += 8)
@@ -198,6 +211,8 @@ void project_all_fast(struct Tile * from, struct Tile * to)
             tile(to, i + k, j).vel_y = vely[k];
         }
     }
+
+    memcpy(from, to, board_size);
 
     free(density);
     free(from_velx);
@@ -271,8 +286,6 @@ void advect_all(struct Tile * from, struct Tile * into)
     }
 }
 
-
-
 void external_consts(struct Tile * inplace) 
 {
     for (int i = 0; i < WIDTH * HEIGHT; i++) 
@@ -335,13 +348,9 @@ int main2()
         for (int k = 0; k < 1 / delta_time; k++) 
         {
             external_consts(board);
-            memcpy(board_, board, board_size);
-            for (int j = 0; j < 60; j++)
-            {
-                project_all_fast(board, board_); // 21.26 s 
-                // project_all(board, board_); // 17.63 s
-                memcpy(board, board_, board_size);
-            }
+
+            project_all_fast(board, board_);
+            // do_project_all(board, board_);
     
             memcpy(board_, board, board_size);
             advect_all(board, board_);
