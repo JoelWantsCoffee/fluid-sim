@@ -63,7 +63,6 @@ void project_all_iteration(struct Tile * from, struct Tile * into)
 
 }
 
-
 void project_all(struct Tile * board, struct Tile * board_)
 {
     memcpy(board_, board, board_size);
@@ -73,7 +72,6 @@ void project_all(struct Tile * board, struct Tile * board_)
         memcpy(board, board_, board_size);
     }
 }
-
 
 
 void populate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
@@ -159,9 +157,7 @@ void project_all_fast(struct Tile * from, struct Tile * to, __m256 * density, __
 
     for (int r = 0; r < ITCOUNT; r++)
     {
-        
         project_all_fast_iteration(density, from_velx, from_vely, to_velx, to_vely, zeros, mask, permute);
-
         memcpy(from_velx, to_velx, simd_board_size * 2);
     }
 
@@ -188,7 +184,6 @@ float density_between(struct Tile * board, index_t i, index_t j, index_t i_, ind
 
 void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_t i_, index_t j_, float frac)
 {
-
     struct Tile * f = &(tile(from, i_, j_));
     struct Tile * x = &(tile(into, i, j));
     struct Tile * y = &(tile(into, i_, j_));
@@ -260,14 +255,7 @@ void print_board(struct Tile * board)
 
             // if (t.density < 0.5) {printf("@"); continue;}
             printf( "%c", tileset(sqrt(t.temp + 0.001)) );
-            // printf( "%c", tileset(0.5 * (fabs(t.p_x) + fabs(t.p_y))));
             // printf( "%c", tileset(0.5 * (fabs(t.vel_x) + fabs(t.vel_y))) );
-
-            // if ((fabs(t.vel_y) < 0.05) && (fabs(t.vel_x) < 0.05)) printf(" ");
-            // else if (fabs(t.vel_y) < 0.05) printf("-");
-            // else if (fabs(t.vel_x) < 0.05) printf("|");
-            // else if (t.vel_x * t.vel_y < 0) printf("/");
-            // else printf("\\");
         }
         printf("\n");
     }
@@ -314,24 +302,3 @@ int main()
     }
     return 0;
 }
-
-/* TEST CODE
-
-
-    int main()
-    {
-        for (int i = 0; i < 10; i++) main2();
-    }
-    __m256 mask = (__m256) _mm256_set_epi32(0,0,0,0,0,0,0,-1);
-    __m256i permute = _mm256_set_epi32(6,5,4,3,2,1,0,7);
-    __m256 * test = aligned_alloc(32, sizeof(__m256) * 2);
-    test[0] = _mm256_set_ps(8,7,6,5,4,3,2,1);
-    test[1] = _mm256_set_ps(16,15,14,13,12,11,10,9);
-    __m256 test2 = bump(test[0]);
-    __m256 test3 = _mm256_permutevar8x32_ps(test[0], permute);
-    __m256 test4 = _mm256_and_ps(test[0], mask);
-
-    float velx[8];
-    _mm256_storeu_ps(velx, test[0]);
-
-*/
