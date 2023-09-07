@@ -104,14 +104,15 @@ void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m
 
 void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
 {
+    float velx[8];
+    float vely[8];
+    
     for (index_t j = 0; j < HEIGHT; j++)
     for (index_t i = 0; i < WIDTH; i += 8)
     {
-        float velx[8];
-        float vely[8];
         int index = (i + j * WIDTH) / 8;
-        _mm256_storeu_ps(velx, ((__m256 *) to_velx)[index]);
-        _mm256_storeu_ps(vely, ((__m256 *) to_vely)[index]);
+        _mm256_storeu_ps(velx, to_velx[index]);
+        _mm256_storeu_ps(vely, to_vely[index]);
         
         for (int k = 0; k < 8; k++)
         {
@@ -121,46 +122,34 @@ void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m
     }
 } 
 
-static inline void project_all_fast_iteration_inner(index_t i, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 zeros, __m256 mask, __m256i permute )
-{
-    #define bump(place) (_mm256_loadu_ps(((float *) (place)) + 1))
-
-    __m256 tu_density = bump(density + i);
-    index_t tv_i = i + (WIDTH/8);
-
-    // d = from_velx[i] + from_vely[i] - from_velx[i + 1] - from_vely[i + WIDTH * 1];
-    // s = density[i] + density[i] - density[i + 1] - density[i + WIDTH * 1];
-    // d *= 1 / s[i];
-    __m256 d = _mm256_mul_ps(precomp_s[i], _mm256_sub_ps( _mm256_add_ps( from_velx[i], from_vely[i] ), _mm256_add_ps( bump(from_velx + i), from_vely[ tv_i ] )));
-
-    
-    // to_velx[i + 1] += density[i + 1] * d;
-    __m256 toadd = _mm256_permutevar8x32_ps( _mm256_fmadd_ps( tu_density, d, bump(to_velx + i) ), permute );
-    to_velx[i] = _mm256_add_ps(_mm256_and_ps(mask, to_velx[i]), _mm256_andnot_ps(mask, toadd));
-    to_velx[i+1] = _mm256_add_ps(_mm256_andnot_ps(mask, to_velx[i+1]), _mm256_and_ps(mask, toadd));
-    
-    // to_vely[i + WIDTH * 1] += density[i + WIDTH * 1] * d;
-    to_vely[tv_i] = _mm256_fmadd_ps( density[tv_i], d, to_vely[tv_i] );
-    
-    // to_velx[i] -= density[i] * d;
-    // to_vely[i] -= density[i] * d;
-    d = _mm256_mul_ps( density[i], d );
-    to_velx[i] = _mm256_sub_ps( to_velx[i], d );
-    to_vely[i] = _mm256_sub_ps( to_vely[i], d );
-}
-
-
 static inline void project_all_fast_iteration( __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 zeros, __m256 mask, __m256i permute )
 {
-    size_t max = WIDTH * HEIGHT / 8;
-    #define n_theads 1
-    #pragma omp parallel num_threads(n_theads)
+    #define bump(place) (_mm256_loadu_ps(((float *) (place)) + 1))
+    
+    for (index_t i = 0; i < WIDTH * HEIGHT / 8; i++)
     {
-        int th_id = omp_get_thread_num();
-        for (index_t i = th_id * max / n_theads ; i < (th_id + 1) * max / n_theads; i++)
-        {
-            project_all_fast_iteration_inner(i, precomp_s, density, from_velx, from_vely, to_velx, to_vely, zeros, mask, permute);
-        }
+        __m256 tu_density = bump(density + i);
+        index_t tv_i = i + (WIDTH/8);
+
+        // d = from_velx[i] + from_vely[i] - from_velx[i + 1] - from_vely[i + WIDTH * 1];
+        // s = density[i] + density[i] - density[i + 1] - density[i + WIDTH * 1];
+        // d *= 1 / s[i];
+        __m256 d = _mm256_mul_ps(precomp_s[i], _mm256_sub_ps( _mm256_add_ps( from_velx[i], from_vely[i] ), _mm256_add_ps( bump(from_velx + i), from_vely[ tv_i ] )));
+
+        
+        // to_velx[i + 1] += density[i + 1] * d;
+        __m256 toadd = _mm256_permutevar8x32_ps( _mm256_fmadd_ps( tu_density, d, bump(to_velx + i) ), permute );
+        to_velx[i] = _mm256_add_ps(_mm256_and_ps(mask, to_velx[i]), _mm256_andnot_ps(mask, toadd));
+        to_velx[i+1] = _mm256_add_ps(_mm256_andnot_ps(mask, to_velx[i+1]), _mm256_and_ps(mask, toadd));
+        
+        // to_vely[i + WIDTH * 1] += density[i + WIDTH * 1] * d;
+        to_vely[tv_i] = _mm256_fmadd_ps( density[tv_i], d, to_vely[tv_i] );
+        
+        // to_velx[i] -= density[i] * d;
+        // to_vely[i] -= density[i] * d;
+        d = _mm256_mul_ps( density[i], d );
+        to_velx[i] = _mm256_sub_ps( to_velx[i], d );
+        to_vely[i] = _mm256_sub_ps( to_vely[i], d );
     }
 }
 
