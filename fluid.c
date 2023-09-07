@@ -307,13 +307,13 @@ int main()
     memcpy(board_, board, board_size);
 
     // ENTER MAIN LOOP
-    for (int i = 0; 1; i++)
+    for (int i = 0; i < 100; i++)
     {
         print_board(board);
 
         for (int k = 0; k < 1 / DELTA_TIME; k++) 
         {
-            external_consts(board, (float) i + k / DELTA_TIME);
+            external_consts(board, (float) i + k * DELTA_TIME);
             // project_all(board, board_);
             project_all_fast(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
             advect_all(board, board_);
