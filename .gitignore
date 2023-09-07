@@ -1,5 +1,5 @@
 debug
 debug.o
 gmon.out
-main
-main.o
+fluid
+fluid.o

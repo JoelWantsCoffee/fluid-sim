@@ -1,20 +1,20 @@
-all: main
+all: fluid
 
-main: main.o
-	gcc -fopenmp -lm -o main -pg main.o
+fluid: fluid.o
+	gcc -fopenmp -lm -o fluid -pg fluid.o
 
-main.o: main.c
-	gcc -fopenmp -mfma -mavx2 -std=gnu99 -O3 -pg -c main.c
+fluid.o: fluid.c
+	gcc -fopenmp -mfma -mavx2 -std=gnu99 -O3 -pg -c fluid.c
 
 debug.o:
-	gcc -fopenmp -mfma -mavx2 -std=gnu99 -g -c main.c -o debug.o
+	gcc -fopenmp -mfma -mavx2 -std=gnu99 -g -c fluid.c -o debug.o
 
 debug: clean debug.o
 	gcc -fopenmp -lm -o debug debug.o
 
 clean:
-	rm -f main debug main.o debug.o gmon.out
+	rm -f fluid debug fluid.o debug.o gmon.out
 
-test: main
-	./main
-	gprof main gmon.out > analysis.txt
+test: fluid
+	./fluid
+	gprof fluid gmon.out > analysis.txt
