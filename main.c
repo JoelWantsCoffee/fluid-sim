@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <math.h>
 #include <immintrin.h>
+#include <omp.h>
 
 #define WIDTH 200
 #define HEIGHT 50
@@ -15,7 +16,7 @@
 #define board_size (sizeof(struct Tile) * WIDTH * HEIGHT)
 #define simd_board_size (sizeof(__m256) * (WIDTH/8 + 1) * (HEIGHT + 1))
 
-#define delta_time 0.025
+#define delta_time 0.05
 
 #define tileset(i) (" .,:;ilw8WM")[(int) ((i < 0)?0:((i*10 < 10)?i*10:10))]
 
@@ -73,21 +74,31 @@ void project_all(struct Tile * board, struct Tile * board_)
     }
 }
 
+float get_s_value(struct Tile * from, index_t i, index_t j)
+{
+    index_t index = i + j * WIDTH;
+    float s = 2 * from[index].density  + from[index + ( i + 1 == WIDTH ? -i : 1 ) ].density + from[index + ( j + 1 == HEIGHT ? j * -WIDTH : WIDTH )].density;
+    s = !s ? 0 : (1 / s);
+    return s;
+}
 
-void populate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
+void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
 {
     for (index_t j = 0; j < HEIGHT + 1; j++)
     for (index_t i = 0; i < WIDTH + 1; i += 8)
     {
         int index = (i + j * WIDTH) / 8;
         
-        #define vec8(board, i, j, prop) _mm256_set_ps( tile( board , i + 7, j).prop, tile( board , i + 6, j).prop, tile( board , i + 5, j).prop, tile( board , i + 4, j).prop, tile( board , i + 3, j).prop, tile( board , i + 2, j).prop, tile( board , i + 1, j).prop, tile( board , i + 0, j).prop )
+        #define vec8(tile, board, i, j, prop) _mm256_set_ps( tile( board , i + 7, j)prop, tile( board , i + 6, j)prop, tile( board , i + 5, j)prop, tile( board , i + 4, j)prop, tile( board , i + 3, j)prop, tile( board , i + 2, j)prop, tile( board , i + 1, j)prop, tile( board , i + 0, j)prop )
         
-        density[index] = vec8(from, i, j, density);
-        from_velx[index] = vec8(from, i, j, vel_x);
-        from_vely[index] = vec8(from, i, j, vel_y);
-        to_velx[index] = vec8(to, i, j, vel_x);
-        to_vely[index] = vec8(to, i, j, vel_y);
+        precomp_s[index] = vec8(get_s_value, from, i, j, );
+        density[index] = vec8(tile, from, i, j, .density);
+        from_velx[index] = vec8(tile, from, i, j, .vel_x);
+        from_vely[index] = vec8(tile, from, i, j, .vel_y);
+        to_velx[index] = vec8(tile, to, i, j, .vel_x);
+        to_vely[index] = vec8(tile, to, i, j, .vel_y);
+
+
     }
 } 
 
@@ -110,46 +121,54 @@ void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m
     }
 } 
 
-
-static inline void project_all_fast_iteration( __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 zeros, __m256 mask, __m256i permute )
-{    
+static inline void project_all_fast_iteration_inner(index_t i, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 zeros, __m256 mask, __m256i permute )
+{
     #define bump(place) (_mm256_loadu_ps(((float *) (place)) + 1))
 
-    for (index_t i = 0; i < WIDTH * HEIGHT / 8; i++)
+    __m256 tu_density = bump(density + i);
+    index_t tv_i = i + (WIDTH/8);
+
+    // d = from_velx[i] + from_vely[i] - from_velx[i + 1] - from_vely[i + WIDTH * 1];
+    // s = density[i] + density[i] - density[i + 1] - density[i + WIDTH * 1];
+    // d *= 1 / s[i];
+    __m256 d = _mm256_mul_ps(precomp_s[i], _mm256_sub_ps( _mm256_add_ps( from_velx[i], from_vely[i] ), _mm256_add_ps( bump(from_velx + i), from_vely[ tv_i ] )));
+
+    
+    // to_velx[i + 1] += density[i + 1] * d;
+    __m256 toadd = _mm256_permutevar8x32_ps( _mm256_fmadd_ps( tu_density, d, bump(to_velx + i) ), permute );
+    to_velx[i] = _mm256_add_ps(_mm256_and_ps(mask, to_velx[i]), _mm256_andnot_ps(mask, toadd));
+    to_velx[i+1] = _mm256_add_ps(_mm256_andnot_ps(mask, to_velx[i+1]), _mm256_and_ps(mask, toadd));
+    
+    // to_vely[i + WIDTH * 1] += density[i + WIDTH * 1] * d;
+    to_vely[tv_i] = _mm256_fmadd_ps( density[tv_i], d, to_vely[tv_i] );
+    
+    // to_velx[i] -= density[i] * d;
+    // to_vely[i] -= density[i] * d;
+    d = _mm256_mul_ps( density[i], d );
+    to_velx[i] = _mm256_sub_ps( to_velx[i], d );
+    to_vely[i] = _mm256_sub_ps( to_vely[i], d );
+}
+
+
+static inline void project_all_fast_iteration( __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 zeros, __m256 mask, __m256i permute )
+{
+    size_t max = WIDTH * HEIGHT / 8;
+    #define n_theads 1
+    #pragma omp parallel num_threads(n_theads)
     {
-        __m256 tu_density = bump(density + i);
-        index_t tv_i = i + (WIDTH/8);
-
-        // d = from_velx[i] + from_vely[i] - from_velx[i + 1] - from_vely[i + WIDTH * 1];
-        // s = density[i] + density[i] - density[i + 1] - density[i + WIDTH * 1];
-        __m256 d = _mm256_sub_ps( _mm256_add_ps( from_velx[i], from_vely[i] ), _mm256_add_ps( bump(from_velx + i), from_vely[ tv_i ] ));
-        __m256 s = _mm256_add_ps( _mm256_add_ps( density[i], density[i]), _mm256_add_ps( tu_density, density[ tv_i ] ));
-
-        // d *= 1 / s[i];
-        d = _mm256_and_ps( _mm256_cmp_ps( s, zeros, _CMP_NEQ_OS), _mm256_div_ps( d, s ) );
-
-        
-        // to_velx[i + 1] += density[i + 1] * d;
-        __m256 toadd = _mm256_permutevar8x32_ps( _mm256_add_ps( _mm256_mul_ps(tu_density, d), bump(to_velx + i) ), permute );
-        to_velx[i] = _mm256_add_ps(_mm256_and_ps(mask, to_velx[i]), _mm256_andnot_ps(mask, toadd));
-        to_velx[i+1] = _mm256_add_ps(_mm256_andnot_ps(mask, to_velx[i+1]), _mm256_and_ps(mask, toadd));
-        
-        // to_vely[i + WIDTH * 1] += density[i + WIDTH * 1] * d;
-        to_vely[tv_i] = _mm256_add_ps( _mm256_mul_ps(density[tv_i], d), to_vely[tv_i] );
-        
-        // to_velx[i] -= density[i] * d;
-        // to_vely[i] -= density[i] * d;
-        d = _mm256_mul_ps( density[i], d );
-        to_velx[i] = _mm256_sub_ps( to_velx[i], d );
-        to_vely[i] = _mm256_sub_ps( to_vely[i], d );
+        int th_id = omp_get_thread_num();
+        for (index_t i = th_id * max / n_theads ; i < (th_id + 1) * max / n_theads; i++)
+        {
+            project_all_fast_iteration_inner(i, precomp_s, density, from_velx, from_vely, to_velx, to_vely, zeros, mask, permute);
+        }
     }
 }
 
-void project_all_fast(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
+void project_all_fast(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
 {
 
     memcpy(to, from, board_size);
-    populate_simd(from, to, density, from_velx, from_vely, to_velx, to_vely);
+    populate_simd(from, to, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
 
     __m256 zeros = _mm256_set_ps(0,0,0,0,0,0,0,0);
     __m256 mask = (__m256) _mm256_set_epi32(0,0,0,0,0,0,0,-1);
@@ -157,7 +176,7 @@ void project_all_fast(struct Tile * from, struct Tile * to, __m256 * density, __
 
     for (int r = 0; r < ITCOUNT; r++)
     {
-        project_all_fast_iteration(density, from_velx, from_vely, to_velx, to_vely, zeros, mask, permute);
+        project_all_fast_iteration(precomp_s, density, from_velx, from_vely, to_velx, to_vely, zeros, mask, permute);
         memcpy(from_velx, to_velx, simd_board_size * 2);
     }
 
@@ -267,9 +286,12 @@ void print_board(struct Tile * board)
 
 int main() 
 {
+    omp_set_dynamic(0);
+
     struct Tile * board = malloc(board_size);
     struct Tile * board_ = malloc(board_size);
 
+    __m256 * precomp_s = aligned_alloc(32, simd_board_size);
     __m256 * density = aligned_alloc(32, simd_board_size);
     __m256 * from_velx = aligned_alloc(32, simd_board_size * 2);
     __m256 * from_vely = from_velx + simd_board_size / sizeof(__m256);
@@ -288,7 +310,7 @@ int main()
 
     memcpy(board_, board, board_size);
 
-    for (int i = 0; 1; i++)
+    for (int i = 0; i < 100; i++)
     {
         print_board(board);
 
@@ -296,7 +318,7 @@ int main()
         {
             external_consts(board, (float) i + k / delta_time);
 
-            project_all_fast(board, board_, density, from_velx, from_vely, to_velx, to_vely);
+            project_all_fast(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
             // project_all(board, board_);
     
             advect_all(board, board_);
