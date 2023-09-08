@@ -1,10 +1,10 @@
 all: fluid
 
 fluid: fluid.o
-	gcc -fno-pie -fno-builtin -fopenmp -lm -o fluid -pg fluid.o
+	gcc -O2 -fno-pie -fno-builtin -fopenmp -lm -o fluid -pg fluid.o
 
 fluid.o: fluid.c
-	gcc -fno-pie -fno-builtin -fopenmp -mfma -mavx2 -std=gnu99 -O3 -pg -c fluid.c
+	gcc -O2 -fno-pie -fno-builtin -fopenmp -mfma -mavx2 -std=gnu99 -pg -c fluid.c
 
 debug.o:
 	gcc -fopenmp -mfma -mavx2 -std=gnu99 -g -c fluid.c -o debug.o

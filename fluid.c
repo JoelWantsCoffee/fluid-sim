@@ -16,6 +16,7 @@
 
 // useful functions
 #define tile(board, x, y) (board)[ ((int) ((y + HEIGHT) % HEIGHT) * WIDTH) + ((x + WIDTH) % WIDTH) ]
+#define tile_unsafe(board, x, y) (board)[ ((int) (y % HEIGHT) * WIDTH) + (x % WIDTH) ]
 #define board_size (sizeof(struct Tile) * WIDTH * HEIGHT)
 #define simd_board_size (sizeof(__m256) * (WIDTH/8 + 1) * (HEIGHT + 1))
 
@@ -67,29 +68,30 @@ void project_all(struct Tile * board, struct Tile * board_)
 // SIMD HELPERS
 // ..
 
-float get_s_value(struct Tile * from, index_t i, index_t j)
+static inline float get_s_value(struct Tile * from, index_t i, index_t j)
 {
-    index_t index = i + j * WIDTH;
+    int index = i + j * WIDTH;
     float s = 2 * from[index].density  + from[index + ( i + 1 == WIDTH ? -i : 1 ) ].density + from[index + ( j + 1 == HEIGHT ? j * -WIDTH : WIDTH )].density;
     s = !s ? 0 : (1 / s);
     return s;
 }
 
+
 void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
 {
     #define vec8(tile, board, i, j, prop) _mm256_set_ps( tile( board , i + 7, j)prop, tile( board , i + 6, j)prop, tile( board , i + 5, j)prop, tile( board , i + 4, j)prop, tile( board , i + 3, j)prop, tile( board , i + 2, j)prop, tile( board , i + 1, j)prop, tile( board , i + 0, j)prop )
     
-    #pragma omp paralell for
+    // #pragma omp parallel for num_threads(6)
     for (index_t j = 0; j < HEIGHT + 1; j++)
     for (index_t i = 0; i < WIDTH + 1; i += 8)
     {
         int index = (i + j * WIDTH) / 8;
         precomp_s[index] = vec8(get_s_value, from, i, j, );
-        density[index] = vec8(tile, from, i, j, .density);
-        from_velx[index] = vec8(tile, from, i, j, .vel_x);
-        from_vely[index] = vec8(tile, from, i, j, .vel_y);
-        to_velx[index] = vec8(tile, to, i, j, .vel_x);
-        to_vely[index] = vec8(tile, to, i, j, .vel_y);
+        density[index] = vec8(tile_unsafe, from, i, j, .density);
+        from_velx[index] = vec8(tile_unsafe, from, i, j, .vel_x);
+        from_vely[index] = vec8(tile_unsafe, from, i, j, .vel_y);
+        to_velx[index] = vec8(tile_unsafe, to, i, j, .vel_x);
+        to_vely[index] = vec8(tile_unsafe, to, i, j, .vel_y);
     }
 } 
 
@@ -126,13 +128,12 @@ static inline void project_all_fast_iteration( __m256 * precomp_s, __m256 * dens
         // d = from_velx[i] + from_vely[i] - from_velx[i + 1] - from_vely[i + WIDTH * 1];
         // s = density[i] + density[i] - density[i + 1] - density[i + WIDTH * 1];
         // d *= 1 / s[i];
-        __m256 d = _mm256_mul_ps(precomp_s[i], _mm256_sub_ps( _mm256_add_ps( from_velx[i], from_vely[i] ), _mm256_add_ps( bump(from_velx + i), from_vely[ tv_i ] )));
+        __m256 d = _mm256_mul_ps(_mm256_sub_ps( _mm256_add_ps( from_velx[i], from_vely[i] ), _mm256_add_ps( bump(from_velx + i), from_vely[ tv_i ] )), precomp_s[i]);
 
-        
         // to_velx[i + 1] += density[i + 1] * d;
-        __m256 toadd = _mm256_permutevar8x32_ps( _mm256_fmadd_ps( tu_density, d, bump(to_velx + i) ), permute );
-        to_velx[i] = _mm256_add_ps(_mm256_and_ps(mask, to_velx[i]), _mm256_andnot_ps(mask, toadd));
-        to_velx[i+1] = _mm256_add_ps(_mm256_andnot_ps(mask, to_velx[i+1]), _mm256_and_ps(mask, toadd));
+        __m256 toadd = _mm256_permutevar8x32_ps( _mm256_mul_ps( tu_density, d ), permute );
+        to_velx[i] = _mm256_add_ps(to_velx[i], _mm256_andnot_ps(mask, toadd));
+        to_velx[i+1] = _mm256_add_ps(to_velx[i+1], _mm256_and_ps(mask, toadd));
         
         // to_vely[i + WIDTH * 1] += density[i + WIDTH * 1] * d;
         to_vely[tv_i] = _mm256_fmadd_ps( density[tv_i], d, to_vely[tv_i] );
@@ -246,13 +247,13 @@ void external_consts(struct Tile * inplace, float t)
     for (int i = 0; i < WIDTH * HEIGHT; i++) 
     {
         inplace[i].vel_y += DELTA_TIME * inplace[i].temp;
-        inplace[i].temp *= pow(0.95, DELTA_TIME);
+        inplace[i].temp *= pow(0.98, DELTA_TIME);
         inplace[i].vel_y *= (fabs(inplace[i].vel_y) > 0.5 * HEIGHT) ? 0 : 1;
         inplace[i].vel_x *= (fabs(inplace[i].vel_x) > 0.5 * WIDTH) ? 0 : 1;
     }
 
-    tile(inplace, WIDTH/2, HEIGHT/4).temp = 1;
-    tile(inplace, WIDTH/2, HEIGHT/4).vel_x += (rand() % 101 - 50) * 0.1;
+    tile(inplace, WIDTH/2, HEIGHT/4).temp = 2;
+    tile(inplace, WIDTH/2, HEIGHT/4).vel_x += DELTA_TIME * sin(t * 0.25) * 8;
 }
 
 // print the board
@@ -265,7 +266,6 @@ void print_board(struct Tile * board)
         for (index_t x = 0; x < WIDTH; x++) 
         {
             struct Tile t = tile(board, x, y);
-
             // if (t.density < 0.5) {printf("@"); continue;}
             // printf( "%c", tileset(0.5 * (fabs(t.vel_x) + fabs(t.vel_y))) );
             printf( "%c", tileset(sqrt(t.temp + 0.001)) );
@@ -307,7 +307,7 @@ int main()
     memcpy(board_, board, board_size);
 
     // ENTER MAIN LOOP
-    for (int i = 0; i < 100; i++)
+    for (int i = 0; 1; i++)
     {
         print_board(board);
 

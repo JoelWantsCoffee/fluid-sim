@@ -3,9 +3,14 @@ Flat profile:
 Each sample counts as 0.01 seconds.
   %   cumulative   self              self     total           
  time   seconds   seconds    calls  us/call  us/call  name    
- 72.98      2.53     2.53                             project_all_fast
- 19.33      3.20     0.67                             advect_all
-  7.79      3.47     0.27     2000   135.13   135.13  populate_simd
+ 39.89      1.47     1.47                             project_all_fast
+ 35.82      2.79     1.32 160000000     0.01     0.01  advect
+ 13.30      3.28     0.49                             advect_all
+  5.70      3.50     0.21     4000    52.58    52.58  populate_simd
+  2.71      3.60     0.10     4000    25.04    25.04  unpopulate_simd
+  1.90      3.67     0.07                             external_consts
+  0.54      3.69     0.02                             density_between
+  0.27      3.70     0.01                             print_board
 
  %         the percentage of the total running time of the
 time       program used by this function.
@@ -43,18 +48,35 @@ notice and this notice are preserved.
 		     Call graph (explanation follows)
 
 
-granularity: each sample hit covers 2 byte(s) for 0.29% of 3.47 seconds
+granularity: each sample hit covers 2 byte(s) for 0.27% of 3.70 seconds
 
 index % time    self  children    called     name
                                                  <spontaneous>
-[1]     80.7    2.53    0.27                 project_all_fast [1]
-                0.27    0.00    2000/2000        populate_simd [3]
+[1]     49.1    0.49    1.32                 advect_all [1]
+                1.32    0.00 160000000/160000000     advect [3]
 -----------------------------------------------
                                                  <spontaneous>
-[2]     19.3    0.67    0.00                 advect_all [2]
+[2]     48.2    1.47    0.31                 project_all_fast [2]
+                0.21    0.00    4000/4000        populate_simd [4]
+                0.10    0.00    4000/4000        unpopulate_simd [5]
 -----------------------------------------------
-                0.27    0.00    2000/2000        project_all_fast [1]
-[3]      7.8    0.27    0.00    2000         populate_simd [3]
+                1.32    0.00 160000000/160000000     advect_all [1]
+[3]     35.8    1.32    0.00 160000000         advect [3]
+-----------------------------------------------
+                0.21    0.00    4000/4000        project_all_fast [2]
+[4]      5.7    0.21    0.00    4000         populate_simd [4]
+-----------------------------------------------
+                0.10    0.00    4000/4000        project_all_fast [2]
+[5]      2.7    0.10    0.00    4000         unpopulate_simd [5]
+-----------------------------------------------
+                                                 <spontaneous>
+[6]      1.9    0.07    0.00                 external_consts [6]
+-----------------------------------------------
+                                                 <spontaneous>
+[7]      0.5    0.02    0.00                 density_between [7]
+-----------------------------------------------
+                                                 <spontaneous>
+[8]      0.3    0.01    0.00                 print_board [8]
 -----------------------------------------------
 
  This table describes the call tree of the program, and was sorted by
@@ -147,4 +169,6 @@ notice and this notice are preserved.
 
 Index by function name
 
-   [2] advect_all              [3] populate_simd           [1] project_all_fast
+   [3] advect                  [6] external_consts         [2] project_all_fast
+   [1] advect_all              [4] populate_simd           [5] unpopulate_simd
+   [7] density_between         [8] print_board
