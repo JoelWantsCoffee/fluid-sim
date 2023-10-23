@@ -8,8 +8,8 @@
 #include <omp.h>
 
 // constants
-#define WIDTH 200
-#define HEIGHT 50
+#define WIDTH 152
+#define HEIGHT 40
 #define SOLVER_ITERATIONS 100
 #define DELTA_TIME 0.05
 #define index_t int32_t
@@ -288,18 +288,18 @@ void init_board(struct Tile * board)
     }
 }
 
-int main() 
+int main(int argc, char** argv) 
 {
     // ALLOCATE GRID DATA
-    struct Tile * board = malloc(board_size);
-    struct Tile * board_ = malloc(board_size);
+    struct Tile * board = (struct Tile *) malloc(board_size);
+    struct Tile * board_ = (struct Tile *) malloc(board_size);
 
     // ALLOCATE BUFFER FOR SIMD FUNCTION USE
-    __m256 * precomp_s = aligned_alloc(32, simd_board_size);
-    __m256 * density = aligned_alloc(32, simd_board_size);
-    __m256 * from_velx = aligned_alloc(32, simd_board_size * 2);
+    __m256 * precomp_s = (__m256 *) aligned_alloc(32, simd_board_size);
+    __m256 * density = (__m256 *) aligned_alloc(32, simd_board_size);
+    __m256 * from_velx = (__m256 *) aligned_alloc(32, simd_board_size * 2);
     __m256 * from_vely = from_velx + simd_board_size / sizeof(__m256);
-    __m256 * to_velx = aligned_alloc(32, simd_board_size * 2);
+    __m256 * to_velx = (__m256 *) aligned_alloc(32, simd_board_size * 2);
     __m256 * to_vely = to_velx + simd_board_size / sizeof(__m256);
 
     // INITIALISE GRID DATA
