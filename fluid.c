@@ -345,7 +345,7 @@ int main(int argc, char** argv)
     if (flags & PRINT_CSV) printf("%d,%d\n", WIDTH, HEIGHT);
 
     // ENTER MAIN LOOP
-    for (int i = 0; 1; i++)
+    for (int i = 0; i < 10; i++)
     {
         print_board(board);
         fprintf(stderr, ".");

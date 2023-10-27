@@ -42,44 +42,6 @@ __global__ void multiply_into_simple(int N, int stride_a, const float* __restric
     C[j*stride_c + i] = lilsum;
 }
 
-
-__host__ void matrixMultiply_GPU(int N, const float* A, const float* B, float* C, int *arg, int argCount)
-{
-    float *A_device;
-    float *B_device;
-    float *C_device;
-    // float *buffer_device;
-
-    check_error(cudaMalloc(&A_device, N*N*sizeof(float)));
-    check_error(cudaMalloc(&B_device, N*N*sizeof(float)));
-    check_error(cudaMalloc(&C_device, N*N*sizeof(float)));
-    // check_error(cudaMalloc(&buffer_device, sizeof(float) * buffer_required_GPU(N) ));
-
-    check_error(cudaMemcpy(A_device, A, N*N*sizeof(float), cudaMemcpyHostToDevice));
-    check_error(cudaMemcpy(B_device, B, N*N*sizeof(float), cudaMemcpyHostToDevice));
-
-    // check_error(cudaMemset(C_device, 0, N*N*sizeof(float)));
-    // check_error(cudaMemset(buffer_device, 0, sizeof(float) * buffer_required_GPU(N) ));
-    // check_error(cudaMemcpy(C_device, C, N*N*sizeof(float), cudaMemcpyHostToDevice));
-
-    multiply_into_simple<<<dim3(2048 / 32, 2048 / 32, 1), dim3(32,32,1)>>>(N, N, B_device, N, A_device, N, C_device);
-    // multiply_into_GPU(N, N, B_device, N, A_device, N, C_device, buffer_device);
-    // matrixMultiplyKernel_GPU<<<1, dim3(shared_size,shared_size,1)>>>(N, B_device, A_device, C_device, 0, 0, 0);
-
-    check_error(cudaPeekAtLastError());
-
-    check_error(cudaDeviceSynchronize());
-
-    check_error(cudaMemcpy(C, C_device, N*N*sizeof(float), cudaMemcpyDeviceToHost));
-    
-    check_error(cudaFree(A_device));
-    check_error(cudaFree(B_device));
-    check_error(cudaFree(C_device));
-    // check_error(cudaFree(buffer_device));
-
-    return;
-}
-
 __global__ void project_block_simple(float * flow, float * from_velx, float * from_vely, float * to_velx, float * to_vely) 
 {
     /*

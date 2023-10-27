@@ -5,7 +5,7 @@
 all: fluid
 
 fluid: fluid.o fluid_cuda.o
-	nvcc -O3 -lm -o fluid -pg fluid.o fluid_cuda.o
+	nvcc -O3 -lm -o fluid.out -pg fluid.o fluid_cuda.o
 
 fluid.o: fluid.c
 	g++ -O2 -fno-pie -fno-builtin -fopenmp -mfma -mavx2 -pg -c fluid.c
