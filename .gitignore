@@ -5,3 +5,5 @@ fluid
 fluid.o
 fluid_cuda.o
 fluid_cuda
+out.csv
+.vscode/c_cpp_properties.json
