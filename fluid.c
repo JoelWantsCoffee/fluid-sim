@@ -77,7 +77,7 @@ void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m
     for (index_t i = 0; i < WIDTH + 1; i += 8)
     {
         int index = (i + j * WIDTH) / 8;
-        precomp_s[index] = vec8(get_s_value, from, i, j, );
+        // precomp_s[index] = vec8(get_s_value, from, i, j, );
         density[index] = vec8(tile_unsafe, from, i, j, .density);
         from_velx[index] = vec8(tile_unsafe, from, i, j, .vel_x);
         from_vely[index] = vec8(tile_unsafe, from, i, j, .vel_y);
@@ -184,7 +184,6 @@ void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_
 
     struct Tile * f = &(tile(from, i_, j_));
     struct Tile * x = &(tile(into, i, j));
-    struct Tile * y_ = &(tile(into, (int) ((i + i_) * 0.5), (int) ((j + j_) * 0.5) ));
     struct Tile * y = &(tile(into, i_, j_));
 
     float velx = frac * f->vel_x;
@@ -196,10 +195,6 @@ void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_
     x->vel_x -= velx * d;
     x->vel_y -= vely * d;
     x->temp -= temp * d;
-
-    // y_->vel_x += velx * d * 0.5;
-    // y_->vel_y += vely * d * 0.5;
-    // y_->temp += temp * d * 0.5;
 
     y->vel_x += velx * d;
     y->vel_y += vely * d;
@@ -238,7 +233,7 @@ void advect_all(struct Tile * from, struct Tile * into)
 
 void sticky_all(struct Tile * from, struct Tile * into)
 {
-    for (int c = 0; c < 2; c++) 
+    // for (int c = 0; c < ; c++) 
     {
         for (index_t y = 0; y < HEIGHT; y++)
         for (index_t x = 0; x < WIDTH; x++) 
@@ -353,6 +348,14 @@ int main(int argc, char** argv)
     __m256 * to_velx = (__m256 *) aligned_alloc(32, simd_board_size * 2);
     __m256 * to_vely = to_velx + simd_board_size / sizeof(__m256);
 
+    float * cuda_density = cuda_alloc();
+    float * cuda_from_velx = cuda_alloc();
+    float * cuda_from_vely = cuda_alloc();
+    float * cuda_to_velx = cuda_alloc();
+    float * cuda_to_vely = cuda_alloc();
+    float * cuda_pressure = cuda_alloc();
+    float * cuda_precomp_s = cuda_alloc();
+
     // INITIALISE GRID DATA
     init_board(board);
     memcpy(board_, board, board_size);
@@ -390,23 +393,24 @@ int main(int argc, char** argv)
 
             // project_all(board, board_);
             // project_all_fast(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
-            project_all_gpu(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
+            project_all_gpu(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely, cuda_density, cuda_from_velx, cuda_from_vely, cuda_to_velx, cuda_to_vely, cuda_pressure, cuda_precomp_s);
             if (flags & TRACK_USAGE) project_time += measure();
 
             advect_all(board, board_);
             if (flags & TRACK_USAGE) advect_time += measure();
 
-            // sticky_all(board, board_);
+            sticky_all(board, board_);
         }
     }
 
     if (flags & TRACK_USAGE) {
         float total = external_time + project_time + advect_time + other_time;
-        fprintf(stderr, "\n-- USAGE REPORT --\n");
+        fprintf(stderr, "\n-- USAGE REPORT (avg fps. %f) --\n", FRAMES / total );
         fprintf(stderr, "\n CONSTRAINTS \t %f%%\n", (external_time / total) * 100 );
         fprintf(stderr, "\n PROJECTION  \t %f%%\n", (project_time / total) * 100 );
         fprintf(stderr, "\n ADVECTION   \t %f%%\n", (advect_time / total) * 100 );
         fprintf(stderr, "\n OTHER       \t %f%%\n", (other_time / total) * 100 );
+        fprintf(stderr, "\n NOTES       \t \"%s\"\n", NOTES );
     }
 
     return 0;
