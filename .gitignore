@@ -3,3 +3,5 @@ debug.o
 gmon.out
 fluid
 fluid.o
+fluid_cuda.o
+fluid_cuda

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Fluid Simulation</title>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.7.0/lib/p5.js"></script>
+</head>
+<body>
+    <input type="file" id="csvFile" accept=".csv" onchange="loadFile()" />
+    <script>
+        let data = [];
+        let frame = 0;
+        let w = 0;
+        let h = 0;
+
+        function preload() {
+            // This function will run once before setup and draw, ensuring that the canvas is created
+        }
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);  // Creates a canvas 400x400 pixels
+        }
+
+        function draw() {
+            background(255);  // Clears the canvas with a white background
+            fill(0);  // Sets the fill color for the rectangle
+            const gridsize = 4;
+            rect(0, 0, w * gridsize, h * gridsize);  // Draws a rectangle at (50, 50) with width 100 and height 100
+            noStroke();
+            for (let i = 0; i < w; i++) {
+                for (let j = 0; j < h; j++) {
+                    fill(sqrt(constrain(data[j + frame * h][i], 0, 1)) * 255);
+                    rect(i * gridsize, j * gridsize * 2, gridsize, gridsize * 2);
+                }
+            }
+
+            if (data.length > 1) {
+                frame++;
+                if (frame >= (data.length / h) - 1) frame = 0;
+            }
+        }
+
+        function loadFile() {
+            const fileInput = document.getElementById('csvFile');
+            const file = fileInput.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const csvString = event.target.result;
+                    data = csvString.split("\n").map((l) => l.split(","));
+                    w = data[0][0];
+                    h = data[0][1];
+                    data.shift();
+                };
+                reader.readAsText(file);
+            }
+        }
+    </script>
+</body>
+</html>

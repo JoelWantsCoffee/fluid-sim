@@ -7,27 +7,13 @@
 #include <immintrin.h>
 #include <omp.h>
 
-// constants
-#define WIDTH 200
-#define HEIGHT 50
-#define SOLVER_ITERATIONS 100
-#define DELTA_TIME 0.05
-#define index_t int32_t
+#include "fluid.h"
+#include "fluid_cuda.cuh"
 
-// useful functions
-#define tile(board, x, y) (board)[ ((int) ((y + HEIGHT) % HEIGHT) * WIDTH) + ((x + WIDTH) % WIDTH) ]
-#define tile_unsafe(board, x, y) (board)[ ((int) (y % HEIGHT) * WIDTH) + (x % WIDTH) ]
-#define board_size (sizeof(struct Tile) * WIDTH * HEIGHT)
-#define simd_board_size (sizeof(__m256) * (WIDTH/8 + 1) * (HEIGHT + 1))
+int flags = 2;
 
-// data for each grid position
-struct Tile 
-{
-    float temp;
-    float vel_x;
-    float vel_y;
-    float density;
-};
+#define PRINT_CSV 1
+#define PRINT_ASCII 2
 
 // PROJECT - REMOVE DIVERGENCE
 // ..
@@ -178,10 +164,10 @@ float density_between(struct Tile * board, index_t i, index_t j, index_t i_, ind
     float out = tile(board, i_, j_).density;
 
     if (i_ > i) for ( index_t ii = i; ii < i_; ii++ ) out *= tile(board, ii, j).density;
-        else    for ( index_t ii = i_; ii < i; ii++ ) out *= tile(board, ii, j).density;
+        else for ( index_t ii = i_; ii < i; ii++ ) out *= tile(board, ii, j).density;
 
     if (j_ > j) for ( index_t jj = j; jj < j_; jj++ ) out *= tile(board, i_, jj).density;
-        else    for ( index_t jj = j_; jj < j; jj++ ) out *= tile(board, i_, jj).density;
+        else for ( index_t jj = j_; jj < j; jj++ ) out *= tile(board, i_, jj).density;
 
     return out;
 }
@@ -189,8 +175,11 @@ float density_between(struct Tile * board, index_t i, index_t j, index_t i_, ind
 // apply velocity to data
 void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_t i_, index_t j_, float frac)
 {
+    if (i >= WIDTH || j >= HEIGHT || i_ >= WIDTH || j_ >= HEIGHT || i <= 0 || j <= 0 || i_ <= 0 || j_ <= 0 ) return;
+
     struct Tile * f = &(tile(from, i_, j_));
     struct Tile * x = &(tile(into, i, j));
+    struct Tile * y_ = &(tile(into, (int) ((i + i_) * 0.5), (int) ((j + j_) * 0.5) ));
     struct Tile * y = &(tile(into, i_, j_));
 
     float velx = frac * f->vel_x;
@@ -199,13 +188,17 @@ void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_
 
     float d = density_between(from, i, j, i_, j_);
 
-    x->vel_x -= velx;
-    x->vel_y -= vely;
-    x->temp -= temp;
+    x->vel_x -= velx * d;
+    x->vel_y -= vely * d;
+    x->temp -= temp * d;
 
-    y->vel_x += velx;
-    y->vel_y += vely;
-    y->temp += temp;
+    // y_->vel_x += velx * d * 0.5;
+    // y_->vel_y += vely * d * 0.5;
+    // y_->temp += temp * d * 0.5;
+
+    y->vel_x += velx * d;
+    y->vel_y += vely * d;
+    y->temp += temp * d;
 }
 
 static inline void advect_tile(struct Tile * from, struct Tile * into, index_t i, index_t j)
@@ -238,6 +231,36 @@ void advect_all(struct Tile * from, struct Tile * into)
     memcpy(from, into, board_size);
 }
 
+void sticky_all(struct Tile * from, struct Tile * into)
+{
+    for (int c = 0; c < 2; c++) 
+    {
+        for (index_t y = 0; y < HEIGHT; y++)
+        for (index_t x = 0; x < WIDTH; x++) 
+        {
+            float count = 
+                ( tile(from, x + 1, y).density 
+                + tile(from, x - 1, y).density 
+                + tile(from, x, y + 1).density 
+                + tile(from, x, y - 1).density
+                );
+
+            float next
+                =
+                ( tile(from, x + 1, y).temp * tile(from, x + 1, y).density
+                + tile(from, x - 1, y).temp * tile(from, x - 1, y).density
+                + tile(from, x, y + 1).temp * tile(from, x, y + 1).density
+                + tile(from, x, y - 1).temp * tile(from, x, y - 1).density )
+                / ( count ? count : 1.0 );
+            
+            tile(into, x, y).temp = (tile(from, x, y).temp * (1 - DELTA_TIME) + next * DELTA_TIME) * tile(from, x, y).density;
+                
+        }
+
+        memcpy(from, into, board_size);
+    }
+}
+
 // OTHER BITS
 // ..
 
@@ -250,6 +273,16 @@ void external_consts(struct Tile * inplace, float t)
         inplace[i].temp *= pow(0.98, DELTA_TIME);
         inplace[i].vel_y *= (fabs(inplace[i].vel_y) > 0.5 * HEIGHT) ? 0 : 1;
         inplace[i].vel_x *= (fabs(inplace[i].vel_x) > 0.5 * WIDTH) ? 0 : 1;
+
+        float cap = 10;
+
+        inplace[i].temp = (inplace[i].temp > cap) ? cap : inplace[i].temp;
+
+        inplace[i].vel_x = (inplace[i].vel_x > cap) ? cap : inplace[i].vel_x;
+        inplace[i].vel_x = (inplace[i].vel_x < -cap) ? -cap : inplace[i].vel_x;
+
+        inplace[i].vel_y = (inplace[i].vel_y > cap) ? cap : inplace[i].vel_y;
+        inplace[i].vel_y = (inplace[i].vel_y < -cap) ? -cap : inplace[i].vel_y;
     }
 
     tile(inplace, WIDTH/2, HEIGHT/4).temp = 2;
@@ -261,62 +294,70 @@ void print_board(struct Tile * board)
 {
     #define tileset(i) (" .,:;ilw8WM")[(int) ((i < 0)?0:((i*10 < 10)?i*10:10))]
 
-    for (index_t y = HEIGHT - 1; y >= 0 ; y--)
+    for (index_t y = HEIGHT - 1; y >= 0; y--)
     {
+
         for (index_t x = 0; x < WIDTH; x++) 
         {
             struct Tile t = tile(board, x, y);
             // if (t.density < 0.5) {printf("@"); continue;}
             // printf( "%c", tileset(0.5 * (fabs(t.vel_x) + fabs(t.vel_y))) );
-            printf( "%c", tileset(sqrt(t.temp + 0.001)) );
+            if (flags & PRINT_ASCII) fprintf( stderr, "%c", tileset(sqrt(t.temp + 0.001)) );
+            if (flags & PRINT_CSV) printf("%f,", t.temp);
         }
-        printf("\n");
+        if (flags & PRINT_CSV) printf("\n");
+        if (flags & PRINT_ASCII) fprintf( stderr, "\n" );
     }
 }
 
 // init board
 void init_board(struct Tile * board)
 {
-    for (int i = 0; i < WIDTH; i++) 
-    for (int j = 0; j < HEIGHT; j++) 
+    for (int i = 0; i < WIDTH; i++)
+    for (int j = 0; j < HEIGHT; j++)
     {
         tile(board, i, j).vel_x = 0.0;
         tile(board, i, j).vel_y = 0.0;
-        tile(board, i, j).temp = 0.0;
+        // tile(board, i, j).temp = (rand() % 10)*0.01 - 0.05;
         tile(board, i, j).density = ! ( !i || !j || i + 1 >= WIDTH || j + 1 >= HEIGHT );
-        tile(board, i, j).density *= ! ( pow(i - WIDTH/2, 2) + pow((j * 2) - 2 * 0.7 * HEIGHT, 2) < pow(7, 2) );
+        // tile(board, i, j).density *= ! ( pow(i - WIDTH/2, 2) + pow((j * 2) - 2 * 0.7 * HEIGHT, 2) < pow(7, 2) );
     }
 }
 
-int main() 
+int main(int argc, char** argv) 
 {
     // ALLOCATE GRID DATA
-    struct Tile * board = malloc(board_size);
-    struct Tile * board_ = malloc(board_size);
+    struct Tile * board = (struct Tile *) malloc(board_size);
+    struct Tile * board_ = (struct Tile *) malloc(board_size);
 
     // ALLOCATE BUFFER FOR SIMD FUNCTION USE
-    __m256 * precomp_s = aligned_alloc(32, simd_board_size);
-    __m256 * density = aligned_alloc(32, simd_board_size);
-    __m256 * from_velx = aligned_alloc(32, simd_board_size * 2);
+    __m256 * precomp_s = (__m256 *) aligned_alloc(32, simd_board_size);
+    __m256 * density = (__m256 *) aligned_alloc(32, simd_board_size);
+    __m256 * from_velx = (__m256 *) aligned_alloc(32, simd_board_size * 2);
     __m256 * from_vely = from_velx + simd_board_size / sizeof(__m256);
-    __m256 * to_velx = aligned_alloc(32, simd_board_size * 2);
+    __m256 * to_velx = (__m256 *) aligned_alloc(32, simd_board_size * 2);
     __m256 * to_vely = to_velx + simd_board_size / sizeof(__m256);
 
     // INITIALISE GRID DATA
     init_board(board);
     memcpy(board_, board, board_size);
 
+    if (flags & PRINT_CSV) printf("%d,%d\n", WIDTH, HEIGHT);
+
     // ENTER MAIN LOOP
     for (int i = 0; 1; i++)
     {
         print_board(board);
+        fprintf(stderr, ".");
 
         for (int k = 0; k < 1 / DELTA_TIME; k++) 
         {
             external_consts(board, (float) i + k * DELTA_TIME);
             // project_all(board, board_);
             project_all_fast(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
+            project_all_gpu(board, board_);
             advect_all(board, board_);
+            sticky_all(board, board_);
         }
     }
     return 0;
