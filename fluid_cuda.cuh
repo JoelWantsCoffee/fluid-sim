@@ -1,1 +1,1 @@
-void project_all_gpu(struct Tile * from, struct Tile * to);
+void project_all_gpu(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely);

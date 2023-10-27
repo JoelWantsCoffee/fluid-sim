@@ -6,14 +6,19 @@
 #include <math.h>
 #include <immintrin.h>
 #include <omp.h>
+#include <time.h>
+
 
 #include "fluid.h"
 #include "fluid_cuda.cuh"
 
-int flags = 2;
+FILE * file_out;
 
 #define PRINT_CSV 1
 #define PRINT_ASCII 2
+#define TRACK_USAGE 4
+
+int flags = PRINT_CSV | TRACK_USAGE;
 
 // PROJECT - REMOVE DIVERGENCE
 // ..
@@ -303,9 +308,9 @@ void print_board(struct Tile * board)
             // if (t.density < 0.5) {printf("@"); continue;}
             // printf( "%c", tileset(0.5 * (fabs(t.vel_x) + fabs(t.vel_y))) );
             if (flags & PRINT_ASCII) fprintf( stderr, "%c", tileset(sqrt(t.temp + 0.001)) );
-            if (flags & PRINT_CSV) printf("%f,", t.temp);
+            if (flags & PRINT_CSV) fprintf(file_out, "%f,", t.temp);
         }
-        if (flags & PRINT_CSV) printf("\n");
+        if (flags & PRINT_CSV) fprintf(file_out, "\n");
         if (flags & PRINT_ASCII) fprintf( stderr, "\n" );
     }
 }
@@ -322,6 +327,16 @@ void init_board(struct Tile * board)
         tile(board, i, j).density = ! ( !i || !j || i + 1 >= WIDTH || j + 1 >= HEIGHT );
         // tile(board, i, j).density *= ! ( pow(i - WIDTH/2, 2) + pow((j * 2) - 2 * 0.7 * HEIGHT, 2) < pow(7, 2) );
     }
+}
+
+
+clock_t measure_clock_prev = 0;
+
+float measure()
+{
+    float out = (float) (clock() - measure_clock_prev) / CLOCKS_PER_SEC;
+    measure_clock_prev = clock();
+    return out;
 }
 
 int main(int argc, char** argv) 
@@ -342,23 +357,57 @@ int main(int argc, char** argv)
     init_board(board);
     memcpy(board_, board, board_size);
 
-    if (flags & PRINT_CSV) printf("%d,%d\n", WIDTH, HEIGHT);
+    if (flags & PRINT_CSV) {
+        file_out = fopen("./out.csv","w");
+        if (!file_out) 
+        {
+            fprintf(stderr, "file open failed :(\n");
+            return -1;
+        }
+    }
+    if (flags & PRINT_CSV) fprintf(file_out, "%d,%d\n", WIDTH, HEIGHT);
+
+    float external_time = 0;
+    float project_time = 0;
+    float advect_time = 0;
+    float other_time = 0;
+
+    measure();
 
     // ENTER MAIN LOOP
-    for (int i = 0; i < 10; i++)
+    fprintf(stderr, "RENDERING %d FRAMES:", FRAMES);
+    for (int i = 0; i < FRAMES; i++)
     {
         print_board(board);
         fprintf(stderr, ".");
 
         for (int k = 0; k < 1 / DELTA_TIME; k++) 
         {
+            if (flags & TRACK_USAGE) other_time += measure();
+
             external_consts(board, (float) i + k * DELTA_TIME);
+            if (flags & TRACK_USAGE) external_time += measure();
+
             // project_all(board, board_);
-            project_all_fast(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
-            project_all_gpu(board, board_);
+            // project_all_fast(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
+            project_all_gpu(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
+            if (flags & TRACK_USAGE) project_time += measure();
+
             advect_all(board, board_);
-            sticky_all(board, board_);
+            if (flags & TRACK_USAGE) advect_time += measure();
+
+            // sticky_all(board, board_);
         }
     }
+
+    if (flags & TRACK_USAGE) {
+        float total = external_time + project_time + advect_time + other_time;
+        fprintf(stderr, "\n-- USAGE REPORT --\n");
+        fprintf(stderr, "\n CONSTRAINTS \t %f%%\n", (external_time / total) * 100 );
+        fprintf(stderr, "\n PROJECTION  \t %f%%\n", (project_time / total) * 100 );
+        fprintf(stderr, "\n ADVECTION   \t %f%%\n", (advect_time / total) * 100 );
+        fprintf(stderr, "\n OTHER       \t %f%%\n", (other_time / total) * 100 );
+    }
+
     return 0;
 }
