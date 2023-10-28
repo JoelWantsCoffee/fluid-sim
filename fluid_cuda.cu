@@ -65,44 +65,89 @@ __global__ void compute_s(float * precomp_s, float * flow, float * pressure)
     pressure[t] = 0;
 }
 
-__host__ void project_all_main_loop(float * flow, float * from_velx, float * from_vely, float * to_velx, float * to_vely, float * pressure, float * precomp_s)
+
+__global__ void sticky_all(float * flow, float * precomp_s, float * from_temp, float * to_temp)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int j = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (i == 0 || j == 0 || i == WIDTH - 1 || j == HEIGHT - 1) return;
+
+    int t = i + j * WIDTH;
+
+    float sum 
+        = flow[t - 1] * from_temp[t - 1] 
+        + flow[t + 1] * from_temp[t + 1] 
+        + flow[t - WIDTH] * from_temp[t - WIDTH] 
+        + flow[t + WIDTH] * from_temp[t + WIDTH];
+    to_temp[t] = from_temp[t] * (1 - DELTA_TIME) + precomp_s[t] * DELTA_TIME * sum;
+}
+
+__global__ void ext_limit(float * vel_x, float * vel_y, float * temp)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int j = blockIdx.y * blockDim.y + threadIdx.y;
+
+    int t = i + j * WIDTH;
+
+    vel_y[t] += DELTA_TIME * temp[t];
+
+    float cap = 10;
+
+    temp[t] = (temp[t] > cap) ? cap : temp[t];
+
+    vel_x[t] = (vel_x[t] > cap) ? cap : vel_x[t];
+    vel_x[t] = (vel_x[t] < -cap) ? -cap : vel_x[t];
+
+    vel_y[t] = (vel_y[t] > cap) ? cap : vel_y[t];
+    vel_y[t] = (vel_y[t] < -cap) ? -cap : vel_y[t];
+}
+
+__host__ void project_all_main_loop(float * flow, float * from_velx, float * from_vely, float * to_velx, float * to_vely, float * pressure, float * precomp_s, float * from_temp, float * to_temp)
 {
     dim3 blocks(WIDTH / 32, HEIGHT / 32, 1);  // This can be dynamically determined based on device properties
     dim3 threads(32, 32, 1);
 
     compute_s<<<blocks, threads>>>(precomp_s, flow, pressure);
 
-    for (int i = 0; i < SOLVER_ITERATIONS/2; i++) 
+    sticky_all<<<blocks, threads>>>(flow, precomp_s, from_temp, to_temp);
+
+    ext_limit<<<blocks, threads>>>(from_velx, from_vely, to_temp);
+
+    for (int i = 0; i < SOLVER_ITERATIONS/2; i++)
     {
         compute_pressure_map<<<blocks, threads>>>(precomp_s, pressure, from_velx, from_vely);
         project_block_simple<<<blocks, threads>>>(flow, pressure, from_velx, from_vely, to_velx, to_vely);
         compute_pressure_map<<<blocks, threads>>>(precomp_s, pressure, to_velx, to_vely);
         project_block_simple<<<blocks, threads>>>(flow, pressure, to_velx, to_vely, from_velx, from_vely);
     }
+
+
     check_error(cudaPeekAtLastError());
     check_error(cudaDeviceSynchronize());
 }
 
 __host__ void project_all_gpu(
     struct Tile * from, struct Tile * to, 
-    __m256 * ext_s, __m256 * ext_flow, __m256 * ext_from_velx, __m256 * ext_from_vely, __m256 * ext_to_velx, __m256 * ext_to_vely, 
-    float * flow, float * from_velx, float * from_vely, float * to_velx, float * to_vely, float * pressure, float * precomp_s
+    __m256 * ext_s, __m256 * ext_flow, __m256 * ext_from_velx, __m256 * ext_from_vely, __m256 * ext_to_velx, __m256 * ext_to_vely, __m256 * ext_from_temp, __m256 * ext_to_temp,
+    float * flow, float * from_velx, float * from_vely, float * to_velx, float * to_vely, float * pressure, float * precomp_s, float * from_temp, float * to_temp
     )
 {
     // Assume flow, from_velx, from_vely, to_velx, to_vely, and pressure are pre-allocated and passed as arguments
 
     // Load memory onto the GPU
     memcpy(to, from, board_size);
-    populate_simd(from, to, ext_s, ext_flow, ext_from_velx, ext_from_vely, ext_to_velx, ext_to_vely);
+    populate_simd(from, to, ext_s, ext_flow, ext_from_velx, ext_from_vely, ext_to_velx, ext_to_vely, ext_from_temp);
 
     check_error(cudaMemcpy(flow, ext_flow, WIDTH*HEIGHT*sizeof(float), cudaMemcpyHostToDevice));
     check_error(cudaMemcpy(from_velx, ext_from_velx, WIDTH*HEIGHT*sizeof(float), cudaMemcpyHostToDevice));
     check_error(cudaMemcpy(from_vely, ext_from_vely, WIDTH*HEIGHT*sizeof(float), cudaMemcpyHostToDevice));
     check_error(cudaMemcpy(to_velx, ext_to_velx, WIDTH*HEIGHT*sizeof(float), cudaMemcpyHostToDevice));
     check_error(cudaMemcpy(to_vely, ext_to_vely, WIDTH*HEIGHT*sizeof(float), cudaMemcpyHostToDevice));
+    check_error(cudaMemcpy(from_temp, ext_from_temp, WIDTH*HEIGHT*sizeof(float), cudaMemcpyHostToDevice));
 
     // Do computation
-    project_all_main_loop(flow, from_velx, from_vely, to_velx, to_vely, pressure, precomp_s);
+    project_all_main_loop(flow, from_velx, from_vely, to_velx, to_vely, pressure, precomp_s, from_temp, to_temp);
 
     // Load memory back from the GPU
     check_error(cudaMemcpy(ext_flow, flow, WIDTH*HEIGHT*sizeof(float), cudaMemcpyDeviceToHost));
@@ -110,7 +155,8 @@ __host__ void project_all_gpu(
     check_error(cudaMemcpy(ext_from_vely, from_vely, WIDTH*HEIGHT*sizeof(float), cudaMemcpyDeviceToHost));
     check_error(cudaMemcpy(ext_to_velx, to_velx, WIDTH*HEIGHT*sizeof(float), cudaMemcpyDeviceToHost));
     check_error(cudaMemcpy(ext_to_vely, to_vely, WIDTH*HEIGHT*sizeof(float), cudaMemcpyDeviceToHost));
+    check_error(cudaMemcpy(ext_to_temp, to_temp, WIDTH*HEIGHT*sizeof(float), cudaMemcpyDeviceToHost));
 
-    unpopulate_simd(from, to, ext_flow, ext_from_velx, ext_from_vely, ext_to_velx, ext_to_vely);
+    unpopulate_simd(from, to, ext_flow, ext_from_velx, ext_from_vely, ext_to_velx, ext_to_vely, ext_to_temp);
     memcpy(from, to, board_size);
 }

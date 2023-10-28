@@ -68,7 +68,7 @@ static inline float get_s_value(struct Tile * from, index_t i, index_t j)
 }
 
 
-void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
+void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 * temp)
 {
     #define vec8(tile, board, i, j, prop) _mm256_set_ps( tile( board , i + 7, j)prop, tile( board , i + 6, j)prop, tile( board , i + 5, j)prop, tile( board , i + 4, j)prop, tile( board , i + 3, j)prop, tile( board , i + 2, j)prop, tile( board , i + 1, j)prop, tile( board , i + 0, j)prop )
     
@@ -83,13 +83,15 @@ void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m
         from_vely[index] = vec8(tile_unsafe, from, i, j, .vel_y);
         to_velx[index] = vec8(tile_unsafe, to, i, j, .vel_x);
         to_vely[index] = vec8(tile_unsafe, to, i, j, .vel_y);
+        temp[index] = vec8(tile_unsafe, to, i, j, .temp);
     }
 } 
 
-void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
+void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 * temp)
 {
     float velx[8];
     float vely[8];
+    float temp_[8];
     
     for (index_t j = 0; j < HEIGHT; j++)
     for (index_t i = 0; i < WIDTH; i += 8)
@@ -97,11 +99,13 @@ void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m
         int index = (i + j * WIDTH) / 8;
         _mm256_storeu_ps(velx, to_velx[index]);
         _mm256_storeu_ps(vely, to_vely[index]);
+        _mm256_storeu_ps(temp_, temp[index]);
         
         for (int k = 0; k < 8; k++)
         {
             tile(to, i + k, j).vel_x = velx[k];
             tile(to, i + k, j).vel_y = vely[k];
+            tile(to, i + k, j).temp = temp_[k];
         }
     }
 } 
@@ -138,11 +142,11 @@ static inline void project_all_fast_iteration( __m256 * precomp_s, __m256 * dens
 }
 
 // remove divergence from velocity, use jacobi, but fast
-void project_all_fast(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely)
+void project_all_fast(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 * temp)
 {
 
     memcpy(to, from, board_size);
-    populate_simd(from, to, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
+    populate_simd(from, to, precomp_s, density, from_velx, from_vely, to_velx, to_vely, temp);
 
     __m256 zeros = _mm256_set_ps(0,0,0,0,0,0,0,0);
     __m256 mask = (__m256) _mm256_set_epi32(0,0,0,0,0,0,0,-1);
@@ -154,7 +158,7 @@ void project_all_fast(struct Tile * from, struct Tile * to, __m256 * precomp_s, 
         memcpy(from_velx, to_velx, simd_board_size * 2);
     }
 
-    unpopulate_simd(from, to, density, from_velx, from_vely, to_velx, to_vely);
+    unpopulate_simd(from, to, density, from_velx, from_vely, to_velx, to_vely, temp);
     memcpy(from, to, board_size);
 }
 
@@ -173,14 +177,25 @@ float density_between(struct Tile * board, index_t i, index_t j, index_t i_, ind
 
     if (j_ > j) for ( index_t jj = j; jj < j_; jj++ ) out *= tile(board, i_, jj).density;
         else for ( index_t jj = j_; jj < j; jj++ ) out *= tile(board, i_, jj).density;
+    
+    float final_out = out;
 
-    return out;
+    out = tile(board, i_, j_).density;
+
+    if (i_ > i) for ( index_t ii = i; ii < i_; ii++ ) out *= tile(board, ii, j_).density;
+        else for ( index_t ii = i_; ii < i; ii++ ) out *= tile(board, ii, j_).density;
+
+    if (j_ > j) for ( index_t jj = j; jj < j_; jj++ ) out *= tile(board, i, jj).density;
+        else for ( index_t jj = j_; jj < j; jj++ ) out *= tile(board, i, jj).density;
+
+    return (out > final_out) ? out : final_out;
 }
 
 // apply velocity to data
 void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_t i_, index_t j_, float frac)
 {
-    if (i >= WIDTH || j >= HEIGHT || i_ >= WIDTH || j_ >= HEIGHT || i <= 0 || j <= 0 || i_ <= 0 || j_ <= 0 ) return;
+    if (i >= WIDTH - 1 || j >= HEIGHT - 1 || i_ >= WIDTH - 1 || j_ >= HEIGHT - 1 || i <= 0 || j <= 0 || i_ <= 0 || j_ <= 0 ) return;
+
 
     struct Tile * f = &(tile(from, i_, j_));
     struct Tile * x = &(tile(into, i, j));
@@ -199,15 +214,21 @@ void advect(struct Tile * from, struct Tile * into, index_t i, index_t j, index_
     y->vel_x += velx * d;
     y->vel_y += vely * d;
     y->temp += temp * d;
+
 }
 
-static inline void advect_tile(struct Tile * from, struct Tile * into, index_t i, index_t j)
+static inline void advect_tile(struct Tile * from, struct Tile * into, index_t i, index_t j, index_t i_min, index_t i_max, index_t j_min, index_t j_max)
 {
+    // if (tile(from, i, j).flags & ADVECTED) return;
+
     float vel_x = DELTA_TIME * tile(from, i, j).vel_x;
     float vel_y = DELTA_TIME * tile(from, i, j).vel_y;
     
     index_t i_ = i - vel_x;
     index_t j_ = j - vel_y;
+
+
+    if ( i >= i_max || j >= j_max || i_ + 1 >= i_max || j_ + 1 >= j_max || i <= i_min || j <= j_min || i_ <= i_min || j_ <= j_min ) return;
 
     float frac_i = (i + vel_x) - i_;
     float frac_j = (j + vel_y) - j_;
@@ -216,16 +237,34 @@ static inline void advect_tile(struct Tile * from, struct Tile * into, index_t i
     advect(from, into, i, j, i_ + 1, j_,     frac_i       * (1 - frac_j));
     advect(from, into, i, j, i_,     j_ + 1, (1 - frac_i) * frac_j      );
     advect(from, into, i, j, i_ + 1, j_ + 1, frac_i       * frac_j      );
+
+    // tile(from, i, j).flags |= ADVECTED;
 }
 
 void advect_all(struct Tile * from, struct Tile * into)
 {
     memcpy(into, from, board_size);
 
+    // doing this in paralell slows down the program.
+    // how can I make it speed it up instead?
+    // #pragma omp parallel for
+    // for (int N = 0; N < 4; N++) 
+    // {
+    //     int min_y = N * HEIGHT / 4;
+    //     int max_y = (N + 1) * HEIGHT / 4;
+
+    //     for (index_t y = min_y; y < max_y; y++)
+    //     for (index_t x = 0; x < WIDTH; x++)
+    //     {
+    //         advect_tile(from, into, x, y, 0, WIDTH, min_y, max_y);
+    //     }
+    // }
+
     for (index_t y = 0; y < HEIGHT; y++)
-    for (index_t x = 0; x < WIDTH; x++) 
+    for (index_t x = 0; x < WIDTH; x++)
     {
-        advect_tile(from, into, x, y);
+        if (from[x + y * WIDTH].flags) continue;
+        advect_tile(from, into, x, y, 0, WIDTH, 0, HEIGHT);
     }
 
     memcpy(from, into, board_size);
@@ -235,6 +274,7 @@ void sticky_all(struct Tile * from, struct Tile * into)
 {
     // for (int c = 0; c < ; c++) 
     {
+        // #pragma omp parallel for
         for (index_t y = 0; y < HEIGHT; y++)
         for (index_t x = 0; x < WIDTH; x++) 
         {
@@ -267,23 +307,26 @@ void sticky_all(struct Tile * from, struct Tile * into)
 // apply external constraints to board
 void external_consts(struct Tile * inplace, float t)
 {
-    for (int i = 0; i < WIDTH * HEIGHT; i++) 
-    {
-        inplace[i].vel_y += DELTA_TIME * inplace[i].temp;
-        inplace[i].temp *= pow(0.98, DELTA_TIME);
-        inplace[i].vel_y *= (fabs(inplace[i].vel_y) > 0.5 * HEIGHT) ? 0 : 1;
-        inplace[i].vel_x *= (fabs(inplace[i].vel_x) > 0.5 * WIDTH) ? 0 : 1;
+    // #pragma omp parallel for
+    // for (int i = 0; i < WIDTH * HEIGHT; i++)
+    // {
+    //     inplace[i].flags = 0;
 
-        float cap = 10;
+    //     inplace[i].vel_y += DELTA_TIME * inplace[i].temp;
+    //     inplace[i].temp *= pow(0.98, DELTA_TIME);
+    //     inplace[i].vel_y *= (fabs(inplace[i].vel_y) > 0.5 * HEIGHT) ? 0 : 1;
+    //     inplace[i].vel_x *= (fabs(inplace[i].vel_x) > 0.5 * WIDTH) ? 0 : 1;
 
-        inplace[i].temp = (inplace[i].temp > cap) ? cap : inplace[i].temp;
+    //     float cap = 10;
 
-        inplace[i].vel_x = (inplace[i].vel_x > cap) ? cap : inplace[i].vel_x;
-        inplace[i].vel_x = (inplace[i].vel_x < -cap) ? -cap : inplace[i].vel_x;
+    //     inplace[i].temp = (inplace[i].temp > cap) ? cap : inplace[i].temp;
 
-        inplace[i].vel_y = (inplace[i].vel_y > cap) ? cap : inplace[i].vel_y;
-        inplace[i].vel_y = (inplace[i].vel_y < -cap) ? -cap : inplace[i].vel_y;
-    }
+    //     inplace[i].vel_x = (inplace[i].vel_x > cap) ? cap : inplace[i].vel_x;
+    //     inplace[i].vel_x = (inplace[i].vel_x < -cap) ? -cap : inplace[i].vel_x;
+
+    //     inplace[i].vel_y = (inplace[i].vel_y > cap) ? cap : inplace[i].vel_y;
+    //     inplace[i].vel_y = (inplace[i].vel_y < -cap) ? -cap : inplace[i].vel_y;
+    // }
 
     tile(inplace, WIDTH/2, HEIGHT/4).temp = 2;
     tile(inplace, WIDTH/2, HEIGHT/4).vel_x += DELTA_TIME * sin(t * 0.25) * 8;
@@ -303,7 +346,7 @@ void print_board(struct Tile * board)
             // if (t.density < 0.5) {printf("@"); continue;}
             // printf( "%c", tileset(0.5 * (fabs(t.vel_x) + fabs(t.vel_y))) );
             if (flags & PRINT_ASCII) fprintf( stderr, "%c", tileset(sqrt(t.temp + 0.001)) );
-            if (flags & PRINT_CSV) fprintf(file_out, "%f,", t.temp);
+            if (flags & PRINT_CSV) fprintf(file_out, "%.2f,", t.temp);
         }
         if (flags & PRINT_CSV) fprintf(file_out, "\n");
         if (flags & PRINT_ASCII) fprintf( stderr, "\n" );
@@ -316,11 +359,12 @@ void init_board(struct Tile * board)
     for (int i = 0; i < WIDTH; i++)
     for (int j = 0; j < HEIGHT; j++)
     {
+        tile(board, i, j).flags = 0;
         tile(board, i, j).vel_x = 0.0;
         tile(board, i, j).vel_y = 0.0;
         // tile(board, i, j).temp = (rand() % 10)*0.01 - 0.05;
         tile(board, i, j).density = ! ( !i || !j || i + 1 >= WIDTH || j + 1 >= HEIGHT );
-        // tile(board, i, j).density *= ! ( pow(i - WIDTH/2, 2) + pow((j * 2) - 2 * 0.7 * HEIGHT, 2) < pow(7, 2) );
+        tile(board, i, j).density *= ! ( pow(i - WIDTH/2, 2) + pow((j * 2) - 2 * 0.7 * HEIGHT, 2) < pow(7, 2) );
     }
 }
 
@@ -347,6 +391,8 @@ int main(int argc, char** argv)
     __m256 * from_vely = from_velx + simd_board_size / sizeof(__m256);
     __m256 * to_velx = (__m256 *) aligned_alloc(32, simd_board_size * 2);
     __m256 * to_vely = to_velx + simd_board_size / sizeof(__m256);
+    __m256 * from_temp = (__m256 *) aligned_alloc(32, simd_board_size);
+    __m256 * to_temp = (__m256 *) aligned_alloc(32, simd_board_size);
 
     float * cuda_density = cuda_alloc();
     float * cuda_from_velx = cuda_alloc();
@@ -355,6 +401,8 @@ int main(int argc, char** argv)
     float * cuda_to_vely = cuda_alloc();
     float * cuda_pressure = cuda_alloc();
     float * cuda_precomp_s = cuda_alloc();
+    float * cuda_from_temp = cuda_alloc();
+    float * cuda_to_temp = cuda_alloc();
 
     // INITIALISE GRID DATA
     init_board(board);
@@ -376,15 +424,16 @@ int main(int argc, char** argv)
     float other_time = 0;
 
     measure();
+    fprintf(stderr, "RENDERING %d FRAMES:", FRAMES);
 
     // ENTER MAIN LOOP
-    fprintf(stderr, "RENDERING %d FRAMES:", FRAMES);
+
     for (int i = 0; i < FRAMES; i++)
     {
         print_board(board);
         fprintf(stderr, ".");
 
-        for (int k = 0; k < 1 / DELTA_TIME; k++) 
+        for (int k = 0; k < TIME_PER_FRAME / DELTA_TIME; k++)
         {
             if (flags & TRACK_USAGE) other_time += measure();
 
@@ -393,13 +442,13 @@ int main(int argc, char** argv)
 
             // project_all(board, board_);
             // project_all_fast(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
-            project_all_gpu(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely, cuda_density, cuda_from_velx, cuda_from_vely, cuda_to_velx, cuda_to_vely, cuda_pressure, cuda_precomp_s);
+            project_all_gpu(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely, from_temp, to_temp, cuda_density, cuda_from_velx, cuda_from_vely, cuda_to_velx, cuda_to_vely, cuda_pressure, cuda_precomp_s, cuda_from_temp, cuda_to_temp);
             if (flags & TRACK_USAGE) project_time += measure();
 
             advect_all(board, board_);
-            if (flags & TRACK_USAGE) advect_time += measure();
 
-            sticky_all(board, board_);
+            if (flags & TRACK_USAGE) advect_time += measure();
+            // sticky_all(board, board_);
         }
     }
 

@@ -1,8 +1,9 @@
 // constants
-#define WIDTH 224
-#define HEIGHT 64
+#define WIDTH 256
+#define HEIGHT 96
 #define SOLVER_ITERATIONS 100
 #define DELTA_TIME 0.05
+#define TIME_PER_FRAME 0.25
 #define FRAMES 300
 #define index_t int32_t
 
@@ -19,9 +20,11 @@ struct Tile
     float vel_x;
     float vel_y;
     float density;
+    int flags;
+    #define ADVECTED 1
 };
 
-void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely);
-void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely);
+void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 * temp);
+void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 * temp);
 
-#define NOTES "the details..."
+#define NOTES "mostly on GPU now + final touches"

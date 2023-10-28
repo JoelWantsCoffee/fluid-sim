@@ -6,13 +6,13 @@
 all: fluid
 
 fluid: fluid.o fluid_cuda.o
-	nvcc -O3 -lm -o fluid.out -pg fluid.o fluid_cuda.o
+	nvcc -O3 -lm -o fluid.out -pg fluid.o fluid_cuda.o -lgomp
 
 fluid.o: fluid.c
 	g++ -O3 -fno-pie -fno-builtin -fopenmp -mfma -mavx2 -pg -c fluid.c
 
 fluid_cuda.o: fluid_cuda.cu fluid_cuda.cuh
-	nvcc --gpu-architecture=sm_35 -Wno-deprecated-gpu-targets -O3 -c fluid_cuda.cu
+	nvcc --gpu-architecture=sm_35 -Wno-deprecated-gpu-targets -O3 -c fluid_cuda.cu -lgomp
 
 debug.o:
 	g++ -g -c fluid.c -o debug.o
