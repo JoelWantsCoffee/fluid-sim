@@ -4,7 +4,7 @@
 #define SOLVER_ITERATIONS 100
 #define DELTA_TIME 0.05
 #define TIME_PER_FRAME 0.25
-#define FRAMES 300
+#define FRAMES 1000
 #define index_t int32_t
 
 // useful functions
@@ -27,4 +27,4 @@ struct Tile
 void populate_simd(struct Tile * from, struct Tile * to, __m256 * precomp_s, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 * temp);
 void unpopulate_simd(struct Tile * from, struct Tile * to, __m256 * density, __m256 * from_velx, __m256 * from_vely, __m256 * to_velx, __m256 * to_vely, __m256 * temp);
 
-#define NOTES "mostly on GPU now + final touches"
+#define NOTES "gpu final"

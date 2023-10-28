@@ -170,7 +170,10 @@ float density_between(struct Tile * board, index_t i, index_t j, index_t i_, ind
 {
     if (i < -WIDTH || i_ < -WIDTH || j < -HEIGHT || j_ < -HEIGHT) return 0;
 
-    float out = tile(board, i_, j_).density;
+    float out = tile(board, i_, j_).density 
+        * tile(board, i_, j).density 
+        * tile(board, i, j_).density 
+        * tile(board, i, j).density;
 
     if (i_ > i) for ( index_t ii = i; ii < i_; ii++ ) out *= tile(board, ii, j).density;
         else for ( index_t ii = i_; ii < i; ii++ ) out *= tile(board, ii, j).density;
@@ -180,7 +183,10 @@ float density_between(struct Tile * board, index_t i, index_t j, index_t i_, ind
     
     float final_out = out;
 
-    out = tile(board, i_, j_).density;
+    out = tile(board, i_, j_).density 
+        * tile(board, i_, j).density 
+        * tile(board, i, j_).density 
+        * tile(board, i, j).density;
 
     if (i_ > i) for ( index_t ii = i; ii < i_; ii++ ) out *= tile(board, ii, j_).density;
         else for ( index_t ii = i_; ii < i; ii++ ) out *= tile(board, ii, j_).density;
@@ -308,28 +314,25 @@ void sticky_all(struct Tile * from, struct Tile * into)
 void external_consts(struct Tile * inplace, float t)
 {
     // #pragma omp parallel for
-    // for (int i = 0; i < WIDTH * HEIGHT; i++)
-    // {
-    //     inplace[i].flags = 0;
+    for (int i = 0; i < WIDTH * HEIGHT; i++)
+    {
+        inplace[i].flags = 0;
 
-    //     inplace[i].vel_y += DELTA_TIME * inplace[i].temp;
-    //     inplace[i].temp *= pow(0.98, DELTA_TIME);
-    //     inplace[i].vel_y *= (fabs(inplace[i].vel_y) > 0.5 * HEIGHT) ? 0 : 1;
-    //     inplace[i].vel_x *= (fabs(inplace[i].vel_x) > 0.5 * WIDTH) ? 0 : 1;
+        inplace[i].vel_y += DELTA_TIME * inplace[i].temp;
+        inplace[i].temp *= pow(0.98, DELTA_TIME);
+        inplace[i].vel_y *= (fabs(inplace[i].vel_y) > 0.5 * HEIGHT) ? 0 : 1;
+        inplace[i].vel_x *= (fabs(inplace[i].vel_x) > 0.5 * WIDTH) ? 0 : 1;
 
-    //     float cap = 10;
+        float cap = 10;
 
-    //     inplace[i].temp = (inplace[i].temp > cap) ? cap : inplace[i].temp;
+        inplace[i].temp = (inplace[i].temp > cap) ? cap : inplace[i].temp;
 
-    //     inplace[i].vel_x = (inplace[i].vel_x > cap) ? cap : inplace[i].vel_x;
-    //     inplace[i].vel_x = (inplace[i].vel_x < -cap) ? -cap : inplace[i].vel_x;
+        inplace[i].vel_x = (inplace[i].vel_x > cap) ? cap : inplace[i].vel_x;
+        inplace[i].vel_x = (inplace[i].vel_x < -cap) ? -cap : inplace[i].vel_x;
 
-    //     inplace[i].vel_y = (inplace[i].vel_y > cap) ? cap : inplace[i].vel_y;
-    //     inplace[i].vel_y = (inplace[i].vel_y < -cap) ? -cap : inplace[i].vel_y;
-    // }
-
-    tile(inplace, WIDTH/2, HEIGHT/4).temp = 2;
-    tile(inplace, WIDTH/2, HEIGHT/4).vel_x += DELTA_TIME * sin(t * 0.25) * 8;
+        inplace[i].vel_y = (inplace[i].vel_y > cap) ? cap : inplace[i].vel_y;
+        inplace[i].vel_y = (inplace[i].vel_y < -cap) ? -cap : inplace[i].vel_y;
+    }
 }
 
 // print the board
@@ -364,7 +367,8 @@ void init_board(struct Tile * board)
         tile(board, i, j).vel_y = 0.0;
         // tile(board, i, j).temp = (rand() % 10)*0.01 - 0.05;
         tile(board, i, j).density = ! ( !i || !j || i + 1 >= WIDTH || j + 1 >= HEIGHT );
-        tile(board, i, j).density *= ! ( pow(i - WIDTH/2, 2) + pow((j * 2) - 2 * 0.7 * HEIGHT, 2) < pow(7, 2) );
+        // tile(board, i, j).density *= ! ( pow(i - WIDTH/2, 2) + pow((j * 2) - 2 * 0.7 * HEIGHT, 2) < pow(7, 2) );
+        tile(board, i, j).density *= ((int) (fabs(i - WIDTH / 2) >= 15) || (fabs(j - 2 * HEIGHT / 3) >= 5));
     }
 }
 
@@ -437,11 +441,15 @@ int main(int argc, char** argv)
         {
             if (flags & TRACK_USAGE) other_time += measure();
 
-            external_consts(board, (float) i + k * DELTA_TIME);
+            // external_consts(board, (float) i + k * DELTA_TIME);
+
+            tile(board, WIDTH/2, HEIGHT/4).temp = 2;
+            tile(board, WIDTH/2, HEIGHT/4).vel_x += DELTA_TIME * sin(((float) i + k * DELTA_TIME) * 0.25) * 8;
+
             if (flags & TRACK_USAGE) external_time += measure();
 
             // project_all(board, board_);
-            // project_all_fast(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely);
+            // project_all_fast(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely, from_temp);
             project_all_gpu(board, board_, precomp_s, density, from_velx, from_vely, to_velx, to_vely, from_temp, to_temp, cuda_density, cuda_from_velx, cuda_from_vely, cuda_to_velx, cuda_to_vely, cuda_pressure, cuda_precomp_s, cuda_from_temp, cuda_to_temp);
             if (flags & TRACK_USAGE) project_time += measure();
 

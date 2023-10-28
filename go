@@ -1,9 +1,6 @@
 #!/bin/bash -l
 #
 #SBATCH --job-name=COSC3500_Project
-#SBATCH --nodes=2
-#SBATCH --ntasks=2
-#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres gpu:1
 #SBATCH --time=0-00:01:00

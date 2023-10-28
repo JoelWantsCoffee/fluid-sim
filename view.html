@@ -13,19 +13,17 @@
         let w = 0;
         let h = 0;
 
-        function preload() {
-            // This function will run once before setup and draw, ensuring that the canvas is created
-        }
+        function preload() { }
 
         function setup() {
-            createCanvas(windowWidth, windowHeight);  // Creates a canvas 400x400 pixels
+            createCanvas(windowWidth, windowHeight);
         }
 
         function draw() {
-            background(255);  // Clears the canvas with a white background
-            fill(0);  // Sets the fill color for the rectangle
+            background(255);
+            fill(0); 
             const gridsize = 4;
-            rect(0, 0, w * gridsize, h * gridsize);  // Draws a rectangle at (50, 50) with width 100 and height 100
+            rect(0, 0, w * gridsize, h * gridsize); 
             noStroke();
             for (let i = 0; i < w; i++) {
                 for (let j = 0; j < h; j++) {
